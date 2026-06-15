@@ -20,8 +20,8 @@ PLAYER_CACHE: dict[str, dict[str, Any]] = {}
 API_KEY_CACHE: dict[str, Any] = {"key": None, "ts": 0}
 CACHE_TTL = 1800
 API_KEY_TTL = 3600
-IS_CLOUD = bool(os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL"))
-HTTP_TIMEOUT = 12 if IS_CLOUD else 25
+IS_RENDER = bool(os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL"))
+HTTP_TIMEOUT = 12 if IS_RENDER else 25
 
 _SSL_CTX = ssl.create_default_context()
 try:
@@ -225,14 +225,14 @@ def _innertube_request(video_id: str, client: dict, cookies: Optional[str] = Non
         headers=headers,
         method="POST",
     )
-    for attempt in range(2 if IS_CLOUD else 3):
+    for attempt in range(2 if IS_RENDER else 3):
         try:
             with _urlopen(req) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 raise ValueError("YouTube временно ограничил запросы. Подождите минуту и попробуйте снова.")
-            if attempt < 1 and not IS_CLOUD:
+            if attempt < 1 and not IS_RENDER:
                 time.sleep(1.5 * (attempt + 1))
                 continue
             raise
@@ -250,7 +250,7 @@ def _fetch_player_from_watch_page(video_id: str, cookies: Optional[str] = None) 
         f"https://www.youtube.com/watch?v={video_id}&bpctr=9999999999&has_verified=1",
         headers=headers,
     )
-    for attempt in range(2 if IS_CLOUD else 3):
+    for attempt in range(2 if IS_RENDER else 3):
         try:
             with _urlopen(req) as resp:
                 html = resp.read().decode("utf-8", errors="replace")
@@ -258,7 +258,7 @@ def _fetch_player_from_watch_page(video_id: str, cookies: Optional[str] = None) 
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 raise ValueError("YouTube временно ограничил запросы. Подождите минуту и попробуйте снова.")
-            if attempt < 1 and not IS_CLOUD:
+            if attempt < 1 and not IS_RENDER:
                 time.sleep(2 * (attempt + 1))
                 continue
             raise
@@ -276,7 +276,7 @@ def fetch_innertube_player(video_id: str, cookies: Optional[str] = None) -> dict
 
     last_error = "Не удалось получить видео с YouTube"
 
-    if not IS_CLOUD:
+    if not IS_RENDER:
         try:
             player = _fetch_player_from_watch_page(video_id, cookies)
             _cache_player(video_id, player)
@@ -305,7 +305,7 @@ def fetch_innertube_player(video_id: str, cookies: Optional[str] = None) -> dict
             "userAgent": IOS_UA,
         },
     ]
-    if not IS_CLOUD:
+    if not IS_RENDER:
         clients.insert(1, {
             "context": {
                 "clientName": "ANDROID_VR",

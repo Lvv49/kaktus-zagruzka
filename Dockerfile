@@ -16,6 +16,7 @@ COPY static/ static/
 COPY extension/ extension/
 
 ENV PORT=10000
+ENV PUBLIC_URL=
 EXPOSE 10000
 
 CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000} --timeout-keep-alive 300"]

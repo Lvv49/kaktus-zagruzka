@@ -980,8 +980,9 @@ async def health():
 async def ping():
     return {
         "ok": True,
-        "mode": "cloud" if IS_RENDER else "local",
+        "mode": "render" if IS_RENDER else ("vps" if os.environ.get("PUBLIC_URL") else "local"),
         "is_render": IS_RENDER,
+        "public_url": PUBLIC_URL,
     }
 
 
