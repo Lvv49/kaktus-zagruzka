@@ -295,7 +295,7 @@ async function analyzeCloud(url) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(requestBody(url)),
-  });
+  }, 55000);
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.detail || 'Не удалось обработать ссылку');

@@ -274,16 +274,6 @@ def fetch_innertube_player(video_id: str, cookies: Optional[str] = None) -> dict
     if cached:
         return cached
 
-    last_error = "Не удалось получить видео с YouTube"
-
-    if not IS_RENDER:
-        try:
-            player = _fetch_player_from_watch_page(video_id, cookies)
-            _cache_player(video_id, player)
-            return player
-        except Exception as watch_error:
-            last_error = str(watch_error)
-
     clients = [
         {
             "context": {
@@ -317,6 +307,8 @@ def fetch_innertube_player(video_id: str, cookies: Optional[str] = None) -> dict
             "userAgent": ANDROID_VR_UA,
         })
 
+    last_error = "Не удалось получить видео с YouTube"
+
     for client in clients:
         try:
             data = _innertube_request(video_id, client, cookies)
@@ -333,6 +325,14 @@ def fetch_innertube_player(video_id: str, cookies: Optional[str] = None) -> dict
             last_error = f"YouTube HTTP {e.code}"
         except Exception as e:
             last_error = str(e)
+
+    if not IS_RENDER:
+        try:
+            player = _fetch_player_from_watch_page(video_id, cookies)
+            _cache_player(video_id, player)
+            return player
+        except Exception as watch_error:
+            last_error = str(watch_error)
 
     raise ValueError(last_error)
 
