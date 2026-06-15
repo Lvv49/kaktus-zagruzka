@@ -980,6 +980,47 @@ async def ping():
     }
 
 
+@app.get("/api/youtube-probe")
+async def youtube_probe(video_id: str = "NFXHm4VArZ0"):
+    try:
+        player = youtube_innertube.fetch_innertube_player(video_id)
+        progressive, adaptive = youtube_innertube._parse_formats(player)
+        return {
+            "ok": True,
+            "progressive": len(progressive),
+            "adaptive": len(adaptive),
+            "title": (player.get("videoDetails") or {}).get("title"),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:500]}
+
+
+class YoutubeStreamRequest(BaseModel):
+    url: str
+    format_id: str
+
+
+@app.post("/api/youtube/stream")
+async def youtube_stream_url(req: YoutubeStreamRequest):
+    url = youtube_innertube.normalize_url(req.url.strip())
+    video_id = youtube_innertube.extract_youtube_id(url)
+    if not video_id:
+        raise HTTPException(400, "Неверная ссылка YouTube")
+
+    try:
+        player = youtube_innertube.fetch_innertube_player(video_id)
+        title = sanitize_filename((player.get("videoDetails") or {}).get("title") or "video")
+        stream = youtube_innertube.pick_innertube_stream(video_id, req.format_id)
+        ext = stream["ext"] if str(stream["ext"]).startswith(".") else f".{stream['ext']}"
+        return {
+            "url": stream["url"],
+            "filename": f"{title}{ext}",
+            "note": stream.get("note"),
+        }
+    except Exception as e:
+        raise HTTPException(400, str(e)[:300])
+
+
 @app.get("/api/config")
 async def get_config():
     return {

@@ -251,6 +251,26 @@ async function analyze() {
   }
 }
 
+async function downloadYoutubeDirect() {
+  showProgress('Получаем ссылку на файл...');
+  const res = await fetch('/api/youtube/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url: currentUrl,
+      format_id: selectedFormatId,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || 'Ошибка скачивания YouTube');
+  }
+  showProgress('Скачиваем файл...');
+  startBrowserDownload(data.url, data.filename || 'video.mp4');
+  const note = data.note ? ` (${data.note})` : '';
+  showProgress(`Готово!${note} Файл сохраняется в папку загрузок.`);
+}
+
 async function downloadCloud() {
   showProgress('Подключаемся к серверу...');
 
@@ -280,7 +300,11 @@ async function download() {
   setLoading(downloadBtn, true);
 
   try {
-    await downloadCloud();
+    if (isYoutube(currentUrl)) {
+      await downloadYoutubeDirect();
+    } else {
+      await downloadCloud();
+    }
   } catch (err) {
     showError(err.message);
   } finally {

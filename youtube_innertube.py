@@ -258,6 +258,20 @@ def fetch_innertube_player(video_id: str) -> dict:
             },
             "userAgent": IOS_UA,
         },
+        {
+            "context": {
+                "clientName": "MWEB",
+                "clientVersion": "2.20250222.01.00",
+            },
+            "userAgent": WEB_UA,
+        },
+        {
+            "context": {
+                "clientName": "TVHTML5_SIMPLY",
+                "clientVersion": "2.0",
+            },
+            "userAgent": WEB_UA,
+        },
     ]
 
     last_error = "Не удалось получить видео с YouTube"
