@@ -194,3 +194,28 @@ input[type="url"]:focus {
 .footer a:hover {
   text-decoration: underline;
 }
+
+.cookies-block {
+  margin-bottom: 10px;
+  text-align: left;
+}
+
+.cookies-block summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: #8fbc8f;
+  font-weight: 600;
+}
+
+#cookies-input {
+  width: 100%;
+  margin-top: 6px;
+  background: #061a0e;
+  border: 1.5px solid #1e4d2e;
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: #e8f5e9;
+  font-family: monospace;
+  font-size: 10px;
+  resize: vertical;
+}

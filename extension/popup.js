@@ -9,6 +9,9 @@ const resultEl = document.getElementById('result');
 const formatSelect = document.getElementById('format-select');
 const serverStatus = document.getElementById('server-status');
 
+const cookiesInput = document.getElementById('cookies-input');
+const cookiesBlock = document.getElementById('cookies-block');
+
 let apiUrl = DEFAULT_API;
 let currentUrl = '';
 let videoData = null;
@@ -36,6 +39,18 @@ async function detectApiUrl() {
   }
   return getApiUrl();
 }
+
+function getCookies() {
+  return cookiesInput.value.trim() || null;
+}
+
+chrome.storage.local.get(['ytCookies'], (data) => {
+  if (data.ytCookies) cookiesInput.value = data.ytCookies;
+});
+
+cookiesInput.addEventListener('input', () => {
+  chrome.storage.local.set({ ytCookies: cookiesInput.value });
+});
 
 function showError(msg) {
   errorBox.textContent = msg;
@@ -117,11 +132,16 @@ async function analyze() {
     const res = await fetch(`${apiUrl}/api/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, cookies: getCookies() }),
     });
 
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Не удалось обработать ссылку');
+    if (!res.ok) {
+      if (data.detail && /cookies|бот|bot|sign in/i.test(data.detail)) {
+        cookiesBlock.open = true;
+      }
+      throw new Error(data.detail || 'Не удалось обработать ссылку');
+    }
 
     currentUrl = url;
     videoData = data;
@@ -140,28 +160,36 @@ async function download() {
   setLoading(downloadBtn, true);
 
   try {
-    const params = new URLSearchParams({
-      url: currentUrl,
-      format_id: formatSelect.value,
+    const res = await fetch(`${apiUrl}/api/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: currentUrl,
+        format_id: formatSelect.value,
+        cookies: getCookies(),
+      }),
     });
 
-    const downloadUrl = `${apiUrl}/api/download?${params}`;
-    const title = videoData?.title || 'video';
-    const ext = formatSelect.selectedOptions[0]?.textContent?.includes('M4A') ? '.m4a'
-      : formatSelect.selectedOptions[0]?.textContent?.includes('WEBM') ? '.webm' : '.mp4';
-    const filename = `${title.slice(0, 80)}${ext}`.replace(/[<>:"/\\|?*]/g, '');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Ошибка скачивания');
+    }
 
-    chrome.runtime.sendMessage(
-      { type: 'download', url: downloadUrl, filename },
-      (resp) => {
-        if (!resp?.ok) {
-          showError(resp?.error || 'Ошибка скачивания');
-        }
-        setLoading(downloadBtn, false);
-      }
-    );
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/i);
+    const filename = match ? decodeURIComponent(match[1]) : 'video.mp4';
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
   } catch (err) {
     showError(err.message);
+  } finally {
     setLoading(downloadBtn, false);
   }
 }

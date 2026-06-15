@@ -1,4 +1,6 @@
 const urlInput = document.getElementById('url-input');
+const cookiesInput = document.getElementById('cookies-input');
+const cookiesBlock = document.getElementById('cookies-block');
 const analyzeBtn = document.getElementById('analyze-btn');
 const downloadBtn = document.getElementById('download-btn');
 const errorBox = document.getElementById('error-box');
@@ -8,6 +10,21 @@ const formatsList = document.getElementById('formats-list');
 let currentUrl = '';
 let selectedFormatId = null;
 let videoData = null;
+
+const savedCookies = localStorage.getItem('yt_cookies') || '';
+if (savedCookies) cookiesInput.value = savedCookies;
+
+cookiesInput.addEventListener('input', () => {
+  localStorage.setItem('yt_cookies', cookiesInput.value);
+});
+
+function getCookies() {
+  return cookiesInput.value.trim() || null;
+}
+
+function isYoutube(url) {
+  return /youtube\.com|youtu\.be/i.test(url);
+}
 
 function showError(msg) {
   errorBox.textContent = msg;
@@ -99,12 +116,15 @@ async function analyze() {
     const res = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, cookies: getCookies() }),
     });
 
     const data = await res.json();
 
     if (!res.ok) {
+      if (data.detail && /cookies|бот|bot|sign in/i.test(data.detail)) {
+        cookiesBlock.open = true;
+      }
       throw new Error(data.detail || 'Не удалось обработать ссылку');
     }
 
@@ -127,12 +147,15 @@ async function download() {
   setLoading(downloadBtn, true);
 
   try {
-    const params = new URLSearchParams({
-      url: currentUrl,
-      format_id: selectedFormatId,
+    const res = await fetch('/api/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: currentUrl,
+        format_id: selectedFormatId,
+        cookies: getCookies(),
+      }),
     });
-
-    const res = await fetch(`/api/download?${params}`);
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -163,6 +186,10 @@ downloadBtn.addEventListener('click', download);
 
 urlInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') analyze();
+});
+
+urlInput.addEventListener('input', () => {
+  if (isYoutube(urlInput.value)) cookiesBlock.open = true;
 });
 
 urlInput.addEventListener('paste', () => {

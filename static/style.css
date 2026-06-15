@@ -217,6 +217,46 @@ input[type="url"]:focus {
   color: var(--text-muted);
 }
 
+.cookies-block {
+  margin-top: 1rem;
+  text-align: left;
+}
+
+.cookies-block summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.cookies-block summary:hover {
+  color: var(--green-bright);
+}
+
+.cookies-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0.6rem 0;
+  line-height: 1.5;
+}
+
+#cookies-input {
+  width: 100%;
+  background: var(--green-dark);
+  border: 1.5px solid var(--green-border);
+  border-radius: 10px;
+  padding: 0.75rem;
+  color: var(--text);
+  font-family: monospace;
+  font-size: 0.75rem;
+  resize: vertical;
+  outline: none;
+}
+
+#cookies-input:focus {
+  border-color: var(--green-bright);
+}
+
 .error-box {
   background: rgba(239, 68, 68, 0.15);
   border: 1px solid rgba(239, 68, 68, 0.4);

@@ -5,6 +5,7 @@ import tempfile
 import uuid
 import zipfile
 import io
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -60,6 +61,30 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 class AnalyzeRequest(BaseModel):
     url: str
+    cookies: Optional[str] = None
+
+
+class DownloadRequest(BaseModel):
+    url: str
+    format_id: str
+    cookies: Optional[str] = None
+
+
+@contextmanager
+def temp_cookie_file(cookies: Optional[str]):
+    if not cookies or not cookies.strip():
+        yield None
+        return
+    fd, path = tempfile.mkstemp(suffix=".txt", prefix="ytcookies_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(cookies.strip())
+        yield path
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def sanitize_filename(name: str) -> str:
@@ -119,14 +144,19 @@ def get_format_label(fmt: dict) -> str:
     return " · ".join(parts)
 
 
-def build_ytdl_opts(extra: Optional[dict] = None, browser: Optional[str] = None, use_cookies: bool = True) -> dict:
+def build_ytdl_opts(
+    extra: Optional[dict] = None,
+    browser: Optional[str] = None,
+    use_cookies: bool = True,
+    cookiefile: Optional[str] = None,
+) -> dict:
     opts: dict = {
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web", "tv_embedded"],
+                "player_client": ["ios", "android", "mweb", "web", "tv_embedded"],
             }
         },
     }
@@ -134,6 +164,10 @@ def build_ytdl_opts(extra: Optional[dict] = None, browser: Optional[str] = None,
         opts.update(extra)
 
     if not use_cookies:
+        return opts
+
+    if cookiefile and Path(cookiefile).is_file():
+        opts["cookiefile"] = cookiefile
         return opts
 
     cookies_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
@@ -144,7 +178,7 @@ def build_ytdl_opts(extra: Optional[dict] = None, browser: Optional[str] = None,
         opts["cookiefile"] = cookies_file
         return opts
 
-    if os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL"):
+    if IS_RENDER:
         return opts
 
     if browser:
@@ -166,48 +200,64 @@ def cookie_browser_fallbacks() -> list[str]:
     return ["chrome", "safari", "firefox", "brave", "edge"]
 
 
-def ytdl_extract(url: str, extra: Optional[dict] = None, download: bool = False) -> dict:
+def ytdl_extract(
+    url: str,
+    extra: Optional[dict] = None,
+    download: bool = False,
+    user_cookies: Optional[str] = None,
+) -> dict:
     base_extra = dict(extra or {})
     if not download:
         base_extra.setdefault("skip_download", True)
         base_extra.setdefault("ignore_no_formats_error", True)
     base_extra.setdefault("extract_flat", False)
 
-    attempts: list[tuple[str, Optional[str], bool]] = [("default", None, False)]
+    with temp_cookie_file(user_cookies) as user_cookie_path:
+        attempts: list[tuple[Optional[str], Optional[str], bool]] = [
+            (None, None, False),
+        ]
 
-    cookies_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
-    if not cookies_file and COOKIES_FILE.is_file():
-        cookies_file = str(COOKIES_FILE)
+        if user_cookie_path:
+            attempts.insert(0, (user_cookie_path, None, True))
 
-    if cookies_file and Path(cookies_file).is_file():
-        attempts.append(("cookies-file", None, True))
-    elif not IS_RENDER:
-        for browser in cookie_browser_fallbacks():
-            attempts.append((f"browser-{browser}", browser, True))
+        cookies_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
+        if not cookies_file and COOKIES_FILE.is_file():
+            cookies_file = str(COOKIES_FILE)
+        if cookies_file and Path(cookies_file).is_file() and not user_cookie_path:
+            attempts.append((cookies_file, None, True))
+        elif not IS_RENDER and not user_cookie_path:
+            for browser in cookie_browser_fallbacks():
+                attempts.append((None, browser, True))
 
-    last_error: Optional[Exception] = None
-    for _name, browser, use_cookies in attempts:
-        try:
-            with yt_dlp.YoutubeDL(build_ytdl_opts(base_extra, browser=browser, use_cookies=use_cookies)) as ydl:
-                return ydl.extract_info(url, download=download)
-        except yt_dlp.utils.DownloadError as e:
-            last_error = e
-            err = str(e).lower()
-            if any(
-                word in err
-                for word in ("bot", "sign in", "cookies", "operation not permitted", "could not copy")
-            ):
-                continue
-            raise
+        last_error: Optional[Exception] = None
+        for cookiefile, browser, use_cookies in attempts:
+            try:
+                opts = build_ytdl_opts(
+                    base_extra,
+                    browser=browser,
+                    use_cookies=use_cookies,
+                    cookiefile=cookiefile,
+                )
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    return ydl.extract_info(url, download=download)
+            except yt_dlp.utils.DownloadError as e:
+                last_error = e
+                err = str(e).lower()
+                if any(
+                    word in err
+                    for word in ("bot", "sign in", "cookies", "operation not permitted", "could not copy")
+                ):
+                    continue
+                raise
 
-    if last_error:
-        raise last_error
-    raise yt_dlp.utils.DownloadError("Не удалось получить видео")
+        if last_error:
+            raise last_error
+        raise yt_dlp.utils.DownloadError("Не удалось получить видео")
 
 
 YOUTUBE_COOKIE_HINT = (
-    "На Render: экспортируй cookies YouTube и добавь в Environment → YTDLP_COOKIES. "
-    "Локально: войди в YouTube в Chrome и перезапусти ./start.sh"
+    "Для YouTube вставь свои cookies ниже (только у тебя, не сохраняются на сервере). "
+    "Расширение Chrome: Get cookies.txt LOCALLY → youtube.com → Export"
 )
 
 
@@ -261,11 +311,11 @@ async def analyze_video(req: AnalyzeRequest):
         raise HTTPException(400, "Вставьте ссылку на видео")
 
     try:
-        info = ytdl_extract(url, download=False)
+        info = ytdl_extract(url, download=False, user_cookies=req.cookies)
     except yt_dlp.utils.DownloadError as e:
         msg = str(e)
         if "bot" in msg.lower() or "sign in" in msg.lower():
-            msg += ". " + YOUTUBE_COOKIE_HINT
+            msg = YOUTUBE_COOKIE_HINT
         raise HTTPException(400, f"Не удалось получить видео: {msg}")
     except Exception as e:
         raise HTTPException(500, f"Ошибка сервера: {str(e)}")
@@ -323,11 +373,20 @@ async def analyze_video(req: AnalyzeRequest):
     }
 
 
+@app.post("/api/download")
+async def download_video_post(req: DownloadRequest):
+    return await _do_download(req.url, req.format_id, req.cookies)
+
+
 @app.get("/api/download")
-async def download_video(
+async def download_video_get(
     url: str = Query(...),
     format_id: str = Query(...),
 ):
+    return await _do_download(url, format_id, None)
+
+
+async def _do_download(url: str, format_id: str, cookies: Optional[str]):
     url = url.strip()
     if not url or not format_id:
         raise HTTPException(400, "Укажите ссылку и формат")
@@ -343,7 +402,7 @@ async def download_video(
     }
 
     try:
-        info = ytdl_extract(url, extra=extra, download=True)
+        info = ytdl_extract(url, extra=extra, download=True, user_cookies=cookies)
 
         with yt_dlp.YoutubeDL(build_ytdl_opts(extra, use_cookies=False)) as ydl:
             filename = ydl.prepare_filename(info)
