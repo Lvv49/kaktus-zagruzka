@@ -117,10 +117,6 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function fetchPreparedFile(downloadUrl, filename, btnText) {
   for (let attempt = 0; attempt < 3; attempt++) {
     if (btnText) {
@@ -167,9 +163,11 @@ async function pollDownloadReady(token, onProgress) {
 }
 
 function defaultFormatIndex(formats) {
-  let idx = formats.findIndex((f) => f.format_id === 'b');
+  let idx = formats.findIndex((f) => f.recommended);
   if (idx >= 0) return idx;
-  idx = formats.findIndex((f) => f.recommended);
+  idx = formats.findIndex((f) => f.format_id === 'b');
+  if (idx >= 0) return idx;
+  idx = formats.findIndex((f) => f.format_id && f.format_id.startsWith('q:720'));
   if (idx >= 0) return idx;
   idx = formats.findIndex((f) => f.filesize && f.filesize !== '—');
   if (idx >= 0) return idx;
@@ -200,7 +198,8 @@ function renderFormats(formats) {
 
     const label = document.createElement('span');
     label.className = 'format-label';
-    label.textContent = fmt.label;
+    const res = fmt.resolution && fmt.resolution !== '—' ? ` · ${fmt.resolution}` : '';
+    label.textContent = fmt.label + res;
     if (fmt.recommended) {
       const badge = document.createElement('span');
       badge.className = 'format-badge';

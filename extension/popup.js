@@ -201,9 +201,11 @@ function sanitizeFilename(name) {
 }
 
 function defaultFormatIndex(formats) {
-  let idx = formats.findIndex((f) => f.format_id === 'b');
+  let idx = formats.findIndex((f) => f.recommended);
   if (idx >= 0) return idx;
-  idx = formats.findIndex((f) => f.recommended);
+  idx = formats.findIndex((f) => f.format_id === 'b');
+  if (idx >= 0) return idx;
+  idx = formats.findIndex((f) => f.format_id && f.format_id.startsWith('q:720'));
   if (idx >= 0) return idx;
   idx = formats.findIndex((f) => f.filesize && f.filesize !== '—');
   if (idx >= 0) return idx;
