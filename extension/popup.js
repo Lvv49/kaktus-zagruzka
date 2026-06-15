@@ -102,18 +102,46 @@ async function grabCurrentTab() {
   }
 }
 
+function setThumbnail(thumb, data) {
+  const urls = [];
+  if (data.thumbnail) {
+    urls.push(data.thumbnail);
+    if (data.thumbnail.includes('.webp')) {
+      urls.push(data.thumbnail.replace('vi_webp/', 'vi/').replace('.webp', '.jpg'));
+    }
+  }
+  if (data.video_id) {
+    urls.push(`https://i.ytimg.com/vi/${data.video_id}/hqdefault.jpg`);
+    urls.push(`https://i.ytimg.com/vi/${data.video_id}/mqdefault.jpg`);
+  }
+
+  if (!urls.length) {
+    thumb.classList.add('hidden');
+    return;
+  }
+
+  let index = 0;
+  thumb.referrerPolicy = 'no-referrer';
+
+  function tryNext() {
+    if (index >= urls.length) {
+      thumb.classList.add('hidden');
+      return;
+    }
+    thumb.src = urls[index++];
+  }
+
+  thumb.onload = () => thumb.classList.remove('hidden');
+  thumb.onerror = tryNext;
+  tryNext();
+}
+
 function renderResult(data) {
   document.getElementById('video-title').textContent = data.title;
   document.getElementById('video-meta').textContent =
     `${data.uploader} · ${data.duration} · ${data.platform}`;
 
-  const thumb = document.getElementById('thumbnail');
-  if (data.thumbnail) {
-    thumb.src = data.thumbnail;
-    thumb.classList.remove('hidden');
-  } else {
-    thumb.classList.add('hidden');
-  }
+  setThumbnail(document.getElementById('thumbnail'), data);
 
   formatSelect.innerHTML = '';
   data.formats.forEach((fmt) => {

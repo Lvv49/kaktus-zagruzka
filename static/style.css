@@ -292,6 +292,8 @@ input[type="url"]:focus {
   object-fit: cover;
   border-radius: 10px;
   border: 2px solid var(--green-border);
+  display: block;
+  background: var(--green-dark);
 }
 
 .thumbnail-placeholder {
@@ -338,7 +340,7 @@ input[type="url"]:focus {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  max-height: 320px;
+  max-height: 480px;
   overflow-y: auto;
 }
 
@@ -556,12 +558,38 @@ input[type="url"]:focus {
 
   .video-card {
     flex-direction: column;
-    align-items: center;
-    text-align: center;
+    align-items: stretch;
+    text-align: left;
+  }
+
+  .video-preview {
+    width: 100%;
+  }
+
+  .thumbnail,
+  .thumbnail-placeholder {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    min-height: 180px;
+    max-height: 220px;
   }
 
   .meta {
-    justify-content: center;
+    justify-content: flex-start;
+  }
+
+  .formats-list {
+    max-height: none;
+  }
+
+  .format-item {
+    flex-wrap: wrap;
+  }
+
+  .format-size {
+    width: 100%;
+    padding-left: 2rem;
   }
 
   .ext-install-btn {

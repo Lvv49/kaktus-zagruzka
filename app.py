@@ -141,7 +141,126 @@ def get_format_label(fmt: dict) -> str:
     if fps:
         parts.append(f"{int(fps)} fps")
 
+    note = fmt.get("format_note")
+    if note and note not in parts and note != resolution:
+        parts.append(note)
+
     return " · ".join(parts)
+
+
+def is_youtube_info(info: dict) -> bool:
+    key = (info.get("extractor_key") or "").lower()
+    url = info.get("webpage_url") or info.get("original_url") or ""
+    return key == "youtube" or "youtube.com" in url or "youtu.be" in url
+
+
+def pick_thumbnail(info: dict) -> Optional[str]:
+    video_id = info.get("id")
+    for thumb in reversed(info.get("thumbnails") or []):
+        url = thumb.get("url") or ""
+        if url and ".webp" not in url.lower():
+            return url
+
+    url = info.get("thumbnail") or ""
+    if url:
+        if ".webp" in url.lower():
+            return url.replace("vi_webp/", "vi/").replace(".webp", ".jpg")
+        return url
+
+    if video_id:
+        return f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+    return None
+
+
+def youtube_quality_presets() -> list[dict]:
+    presets = [
+        ("bestvideo+bestaudio/best", "MP4 · лучшее качество", 99999, True),
+        ("bestvideo[height<=2160]+bestaudio/best[height<=2160]", "MP4 · до 4K", 2160, False),
+        ("bestvideo[height<=1440]+bestaudio/best[height<=1440]", "MP4 · до 1440p", 1440, False),
+        ("bestvideo[height<=1080]+bestaudio/best[height<=1080]", "MP4 · до 1080p", 1080, False),
+        ("bestvideo[height<=720]+bestaudio/best[height<=720]", "MP4 · до 720p", 720, False),
+        ("bestvideo[height<=480]+bestaudio/best[height<=480]", "MP4 · до 480p", 480, False),
+        ("bestvideo[height<=360]+bestaudio/best[height<=360]", "MP4 · до 360p", 360, False),
+        ("bestaudio", "M4A · только аудио", 0, False),
+    ]
+    result = []
+    for fmt_id, label, height, recommended in presets:
+        result.append({
+            "format_id": fmt_id,
+            "label": label,
+            "ext": "mp4" if fmt_id != "bestaudio" else "m4a",
+            "resolution": f"{height}p" if height else "—",
+            "filesize": "—",
+            "has_video": fmt_id != "bestaudio",
+            "has_audio": True,
+            "quality": height,
+            "height": height,
+            "recommended": recommended,
+        })
+    return result
+
+
+def merge_infos(infos: list[dict]) -> dict:
+    best = max(
+        infos,
+        key=lambda i: (count_useful_formats(i), len(i.get("title") or "")),
+    )
+    merged = dict(best)
+    fmt_map: dict[str, dict] = {}
+    for info in infos:
+        for fmt in info.get("formats", []):
+            fid = fmt.get("format_id")
+            if fid and is_useful_format(fmt):
+                fmt_map[str(fid)] = fmt
+    merged["formats"] = list(fmt_map.values())
+    return merged
+
+
+def build_format_list(info: dict) -> list[dict]:
+    formats = []
+    seen_ids: set[str] = set()
+    seen_labels: set[str] = set()
+
+    for fmt in info.get("formats", []):
+        if not is_useful_format(fmt):
+            continue
+
+        fmt_id = str(fmt.get("format_id", ""))
+        if not fmt_id or fmt_id in seen_ids:
+            continue
+        seen_ids.add(fmt_id)
+
+        has_video = fmt.get("vcodec") != "none"
+        has_audio = fmt.get("acodec") != "none"
+        label = get_format_label(fmt)
+        if label in seen_labels:
+            label = f"{label} · #{fmt_id}"
+        seen_labels.add(label)
+
+        formats.append({
+            "format_id": fmt_id,
+            "label": label,
+            "ext": fmt.get("ext", "mp4"),
+            "resolution": fmt.get("resolution") or (f"{fmt.get('height')}p" if fmt.get("height") else "—"),
+            "filesize": format_size(fmt.get("filesize") or fmt.get("filesize_approx")),
+            "has_video": has_video,
+            "has_audio": has_audio,
+            "quality": fmt.get("quality") or 0,
+            "height": fmt.get("height") or 0,
+            "recommended": has_video and has_audio,
+        })
+
+    if is_youtube_info(info):
+        for preset in youtube_quality_presets():
+            if preset["format_id"] not in seen_ids:
+                formats.append(preset)
+                seen_ids.add(preset["format_id"])
+
+    formats.sort(
+        key=lambda f: (f["recommended"], f["has_video"], f["has_audio"], f["height"], f["quality"]),
+        reverse=True,
+    )
+    return formats
 
 
 def build_ytdl_opts(
@@ -274,8 +393,7 @@ def ytdl_extract(
             for browser in cookie_browser_fallbacks():
                 attempts.append((None, browser, True, None))
 
-        best_info: Optional[dict] = None
-        best_count = -1
+        collected: list[dict] = []
         last_error: Optional[Exception] = None
 
         for cookiefile, browser, use_cookies, clients in attempts:
@@ -291,12 +409,7 @@ def ytdl_extract(
                     info = ydl.extract_info(url, download=download)
                 if not is_valid_info(info):
                     continue
-                count = count_useful_formats(info)
-                if count > best_count:
-                    best_count = count
-                    best_info = info
-                if count >= 3:
-                    return info
+                collected.append(info)
             except yt_dlp.utils.DownloadError as e:
                 last_error = e
                 err = str(e).lower()
@@ -307,8 +420,8 @@ def ytdl_extract(
                     continue
                 raise
 
-        if best_info is not None:
-            return best_info
+        if collected:
+            return merge_infos(collected)
 
         if last_error:
             raise last_error
@@ -390,37 +503,7 @@ async def analyze_video(req: AnalyzeRequest):
         if info is None:
             raise HTTPException(400, "Не удалось получить первое видео из плейлиста")
 
-    formats = []
-    seen_labels = set()
-    for fmt in info.get("formats", []):
-        if not is_useful_format(fmt):
-            continue
-
-        has_video = fmt.get("vcodec") != "none"
-        has_audio = fmt.get("acodec") != "none"
-        label = get_format_label(fmt)
-
-        if label in seen_labels:
-            continue
-        seen_labels.add(label)
-
-        formats.append({
-            "format_id": fmt.get("format_id"),
-            "label": label,
-            "ext": fmt.get("ext", "mp4"),
-            "resolution": fmt.get("resolution") or (f"{fmt.get('height')}p" if fmt.get("height") else "—"),
-            "filesize": format_size(fmt.get("filesize") or fmt.get("filesize_approx")),
-            "has_video": has_video,
-            "has_audio": has_audio,
-            "quality": fmt.get("quality") or 0,
-            "height": fmt.get("height") or 0,
-            "recommended": has_video and has_audio,
-        })
-
-    formats.sort(
-        key=lambda f: (f["recommended"], f["has_video"], f["has_audio"], f["height"], f["quality"]),
-        reverse=True,
-    )
+    formats = build_format_list(info)
 
     if not formats and info.get("title"):
         formats = fallback_formats()
@@ -428,9 +511,13 @@ async def analyze_video(req: AnalyzeRequest):
     if not formats:
         raise HTTPException(400, "Доступные форматы не найдены. Проверьте ссылку на видео.")
 
+    video_id = info.get("id")
+    thumbnail = pick_thumbnail(info)
+
     return {
         "title": info.get("title", "Без названия"),
-        "thumbnail": info.get("thumbnail"),
+        "thumbnail": thumbnail,
+        "video_id": video_id,
         "duration": format_duration(info.get("duration")),
         "uploader": info.get("uploader") or info.get("channel") or "—",
         "platform": info.get("extractor_key", "—"),

@@ -28,6 +28,45 @@ function setLoading(btn, loading) {
   if (loader) loader.classList.toggle('hidden', !loading);
 }
 
+function setThumbnail(thumb, placeholder, data) {
+  const urls = [];
+  if (data.thumbnail) {
+    urls.push(data.thumbnail);
+    if (data.thumbnail.includes('.webp')) {
+      urls.push(data.thumbnail.replace('vi_webp/', 'vi/').replace('.webp', '.jpg'));
+    }
+  }
+  if (data.video_id) {
+    urls.push(`https://i.ytimg.com/vi/${data.video_id}/hqdefault.jpg`);
+    urls.push(`https://i.ytimg.com/vi/${data.video_id}/mqdefault.jpg`);
+  }
+
+  if (!urls.length) {
+    thumb.classList.add('hidden');
+    placeholder.classList.remove('hidden');
+    return;
+  }
+
+  let index = 0;
+  thumb.referrerPolicy = 'no-referrer';
+
+  function tryNext() {
+    if (index >= urls.length) {
+      thumb.classList.add('hidden');
+      placeholder.classList.remove('hidden');
+      return;
+    }
+    thumb.src = urls[index++];
+  }
+
+  thumb.onload = () => {
+    thumb.classList.remove('hidden');
+    placeholder.classList.add('hidden');
+  };
+  thumb.onerror = tryNext;
+  tryNext();
+}
+
 function renderVideoInfo(data) {
   document.getElementById('video-title').textContent = data.title;
   document.getElementById('video-uploader').textContent = data.uploader;
@@ -36,15 +75,7 @@ function renderVideoInfo(data) {
 
   const thumb = document.getElementById('thumbnail');
   const placeholder = document.getElementById('thumbnail-placeholder');
-
-  if (data.thumbnail) {
-    thumb.src = data.thumbnail;
-    thumb.classList.remove('hidden');
-    placeholder.classList.add('hidden');
-  } else {
-    thumb.classList.add('hidden');
-    placeholder.classList.remove('hidden');
-  }
+  setThumbnail(thumb, placeholder, data);
 }
 
 function renderFormats(formats) {

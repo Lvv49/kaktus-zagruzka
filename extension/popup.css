@@ -138,12 +138,14 @@ input[type="url"]:focus {
 }
 
 .thumbnail {
-  width: 72px;
-  height: 40px;
+  width: 120px;
+  height: 68px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid #1e4d2e;
   flex-shrink: 0;
+  display: block;
+  background: #061a0e;
 }
 
 .video-title {
