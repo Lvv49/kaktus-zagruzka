@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: kaktus-zagruzka
+    runtime: docker
+    plan: free
+    healthCheckPath: /

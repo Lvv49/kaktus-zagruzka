@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Кактус загрузка</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="header">
+    <img src="icons/icon48.png" alt="" class="logo">
+    <div>
+      <h1>Кактус загрузка</h1>
+      <p class="status" id="server-status">Проверка сервера...</p>
+    </div>
+  </header>
+
+  <div class="url-row">
+    <input type="url" id="url-input" placeholder="Ссылка на видео...">
+    <button id="grab-btn" class="btn-icon" title="Взять с текущей вкладки">📋</button>
+  </div>
+
+  <button id="analyze-btn" class="btn btn-primary">
+    <span class="btn-text">Найти форматы</span>
+    <span class="btn-loader hidden"></span>
+  </button>
+
+  <div id="error-box" class="error-box hidden"></div>
+
+  <div id="result" class="hidden">
+    <div class="video-info">
+      <img id="thumbnail" class="thumbnail hidden" alt="">
+      <div class="video-meta">
+        <p id="video-title" class="video-title">—</p>
+        <p id="video-meta" class="video-sub">—</p>
+      </div>
+    </div>
+
+    <p class="label">Формат</p>
+    <select id="format-select" class="format-select"></select>
+
+    <button id="download-btn" class="btn btn-download">
+      <span class="btn-text">⬇ Скачать</span>
+      <span class="btn-loader hidden"></span>
+    </button>
+  </div>
+
+  <footer class="footer">
+    <a href="http://127.0.0.1:8081" target="_blank">Открыть сайт</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
