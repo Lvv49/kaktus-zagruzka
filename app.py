@@ -148,10 +148,14 @@ def get_format_label(fmt: dict) -> str:
     return " · ".join(parts)
 
 
-def is_youtube_info(info: dict) -> bool:
+def is_youtube_url(url: str) -> bool:
+    return bool(re.search(r"(youtube\.com|youtu\.be|youtube-nocookie\.com)", url, re.I))
+
+
+def is_youtube_info(info: dict, source_url: str = "") -> bool:
     key = (info.get("extractor_key") or "").lower()
-    url = info.get("webpage_url") or info.get("original_url") or ""
-    return key == "youtube" or "youtube.com" in url or "youtu.be" in url
+    url = info.get("webpage_url") or info.get("original_url") or source_url or ""
+    return "youtube" in key or is_youtube_url(url)
 
 
 def pick_thumbnail(info: dict) -> Optional[str]:
@@ -175,13 +179,15 @@ def pick_thumbnail(info: dict) -> Optional[str]:
 def youtube_quality_presets() -> list[dict]:
     presets = [
         ("bestvideo+bestaudio/best", "MP4 · лучшее качество", 99999, True),
-        ("bestvideo[height<=2160]+bestaudio/best[height<=2160]", "MP4 · до 4K", 2160, False),
-        ("bestvideo[height<=1440]+bestaudio/best[height<=1440]", "MP4 · до 1440p", 1440, False),
-        ("bestvideo[height<=1080]+bestaudio/best[height<=1080]", "MP4 · до 1080p", 1080, False),
-        ("bestvideo[height<=720]+bestaudio/best[height<=720]", "MP4 · до 720p", 720, False),
-        ("bestvideo[height<=480]+bestaudio/best[height<=480]", "MP4 · до 480p", 480, False),
-        ("bestvideo[height<=360]+bestaudio/best[height<=360]", "MP4 · до 360p", 360, False),
+        ("bestvideo[height<=2160]+bestaudio/best[height<=2160]", "MP4 · 4K", 2160, False),
+        ("bestvideo[height<=1440]+bestaudio/best[height<=1440]", "MP4 · 1440p", 1440, False),
+        ("bestvideo[height<=1080]+bestaudio/best[height<=1080]", "MP4 · 1080p", 1080, False),
+        ("bestvideo[height<=720]+bestaudio/best[height<=720]", "MP4 · 720p", 720, False),
+        ("bestvideo[height<=480]+bestaudio/best[height<=480]", "MP4 · 480p", 480, False),
+        ("bestvideo[height<=360]+bestaudio/best[height<=360]", "MP4 · 360p", 360, False),
+        ("bestvideo[height<=240]+bestaudio/best[height<=240]", "MP4 · 240p", 240, False),
         ("bestaudio", "M4A · только аудио", 0, False),
+        ("worst", "MP4 · минимальный размер", 1, False),
     ]
     result = []
     for fmt_id, label, height, recommended in presets:
@@ -216,7 +222,7 @@ def merge_infos(infos: list[dict]) -> dict:
     return merged
 
 
-def build_format_list(info: dict) -> list[dict]:
+def build_format_list(info: dict, source_url: str = "") -> list[dict]:
     formats = []
     seen_ids: set[str] = set()
     seen_labels: set[str] = set()
@@ -250,11 +256,15 @@ def build_format_list(info: dict) -> list[dict]:
             "recommended": has_video and has_audio,
         })
 
-    if is_youtube_info(info):
+    if is_youtube_info(info, source_url):
+        existing_heights = {f["height"] for f in formats if f.get("height")}
         for preset in youtube_quality_presets():
-            if preset["format_id"] not in seen_ids:
-                formats.append(preset)
-                seen_ids.add(preset["format_id"])
+            if preset["format_id"] in seen_ids:
+                continue
+            if preset["height"] and preset["height"] in existing_heights and preset["height"] < 99999:
+                continue
+            formats.append(preset)
+            seen_ids.add(preset["format_id"])
 
     formats.sort(
         key=lambda f: (f["recommended"], f["has_video"], f["has_audio"], f["height"], f["quality"]),
@@ -503,10 +513,10 @@ async def analyze_video(req: AnalyzeRequest):
         if info is None:
             raise HTTPException(400, "Не удалось получить первое видео из плейлиста")
 
-    formats = build_format_list(info)
+    formats = build_format_list(info, source_url=url)
 
     if not formats and info.get("title"):
-        formats = fallback_formats()
+        formats = youtube_quality_presets() if is_youtube_url(url) else fallback_formats()
 
     if not formats:
         raise HTTPException(400, "Доступные форматы не найдены. Проверьте ссылку на видео.")
