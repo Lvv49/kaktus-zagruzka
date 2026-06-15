@@ -55,7 +55,7 @@ window.addEventListener('message', (event) => {
 
   if (action === 'youtubeDownload') {
     chrome.runtime.sendMessage({
-      type: 'youtubeDownload',
+      type: 'youtubeDownloadAndSave',
       url: payload.url,
       formatId: payload.formatId,
     }, (resp) => {
@@ -68,28 +68,7 @@ window.addEventListener('message', (event) => {
         }, '*');
         return;
       }
-      if (!resp?.ok) {
-        window.postMessage({
-          channel: KAKTUS_EXT,
-          requestId,
-          ok: false,
-          error: resp?.error || 'Ошибка скачивания',
-        }, '*');
-        return;
-      }
-      chrome.runtime.sendMessage({
-        type: 'download',
-        url: resp.url,
-        filename: resp.filename,
-      }, (dl) => {
-        window.postMessage({
-          channel: KAKTUS_EXT,
-          requestId,
-          ok: Boolean(dl?.ok),
-          error: dl?.error,
-          note: resp.note,
-        }, '*');
-      });
+      window.postMessage({ channel: KAKTUS_EXT, requestId, ...resp }, '*');
     });
     return;
   }

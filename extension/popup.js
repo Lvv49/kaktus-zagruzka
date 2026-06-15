@@ -126,9 +126,9 @@ function setThumbnail(thumb, data) {
   tryNext();
 }
 
-function triggerChromeDownload(url, filename) {
+function triggerChromeDownload(url, filename, videoId) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ type: 'download', url, filename }, (resp) => {
+    chrome.runtime.sendMessage({ type: 'download', url, filename, videoId }, (resp) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
         return;
@@ -220,17 +220,15 @@ async function analyze() {
 }
 
 async function downloadYoutubeLocal() {
+  showProgress('Получаем свежую ссылку и скачиваем...');
   const data = await chrome.runtime.sendMessage({
-    type: 'youtubeDownload',
+    type: 'youtubeDownloadAndSave',
     url: currentUrl,
     formatId: formatSelect.value,
   });
   if (!data?.ok) {
     throw new Error(data?.error || 'Ошибка скачивания');
   }
-
-  showProgress('Запускаем скачивание в Chrome...');
-  await triggerChromeDownload(data.url, data.filename);
   if (data.note) {
     showProgress(`Готово! (${data.note}) Файл в папке «Загрузки».`);
   } else {
