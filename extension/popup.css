@@ -219,3 +219,10 @@ input[type="url"]:focus {
   font-size: 10px;
   resize: vertical;
 }
+
+.cookies-status {
+  font-size: 11px;
+  color: #4ade4a;
+  margin-bottom: 8px;
+  font-weight: 600;
+}

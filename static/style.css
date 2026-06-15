@@ -233,6 +233,14 @@ input[type="url"]:focus {
   color: var(--green-bright);
 }
 
+.cookies-status {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--green-bright);
+  font-weight: 600;
+  text-align: left;
+}
+
 .cookies-hint {
   font-size: 0.8rem;
   color: var(--text-muted);

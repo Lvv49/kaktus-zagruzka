@@ -12,7 +12,16 @@ let selectedFormatId = null;
 let videoData = null;
 
 const savedCookies = localStorage.getItem('yt_cookies') || '';
-if (savedCookies) cookiesInput.value = savedCookies;
+if (savedCookies) {
+  cookiesInput.value = savedCookies;
+  document.getElementById('cookies-status').classList.remove('hidden');
+}
+
+window.addEventListener('kaktus-cookies', (e) => {
+  cookiesInput.value = e.detail;
+  localStorage.setItem('yt_cookies', e.detail);
+  document.getElementById('cookies-status').classList.remove('hidden');
+});
 
 cookiesInput.addEventListener('input', () => {
   localStorage.setItem('yt_cookies', cookiesInput.value);
@@ -108,6 +117,11 @@ async function analyze() {
     return;
   }
 
+  if (isYoutube(url) && !getCookies()) {
+    showError('Установи расширение Chrome (кнопка справа сверху) и зайди на youtube.com');
+    return;
+  }
+
   hideError();
   setLoading(analyzeBtn, true);
   resultSection.classList.add('hidden');
@@ -186,10 +200,6 @@ downloadBtn.addEventListener('click', download);
 
 urlInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') analyze();
-});
-
-urlInput.addEventListener('input', () => {
-  if (isYoutube(urlInput.value)) cookiesBlock.open = true;
 });
 
 urlInput.addEventListener('paste', () => {

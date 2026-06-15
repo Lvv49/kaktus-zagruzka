@@ -44,12 +44,22 @@ function getCookies() {
   return cookiesInput.value.trim() || null;
 }
 
-chrome.storage.local.get(['ytCookies'], (data) => {
-  if (data.ytCookies) cookiesInput.value = data.ytCookies;
-});
+async function loadAutoCookies() {
+  const cookies = await syncYoutubeCookies();
+  if (cookies) {
+    cookiesInput.value = cookies;
+    document.getElementById('cookies-status').classList.remove('hidden');
+  }
+  return cookies;
+}
 
-cookiesInput.addEventListener('input', () => {
-  chrome.storage.local.set({ ytCookies: cookiesInput.value });
+chrome.storage.local.get(['ytCookies'], async (data) => {
+  if (data.ytCookies) {
+    cookiesInput.value = data.ytCookies;
+    document.getElementById('cookies-status').classList.remove('hidden');
+  } else {
+    await loadAutoCookies();
+  }
 });
 
 function showError(msg) {
@@ -127,6 +137,10 @@ async function analyze() {
   hideError();
   setLoading(analyzeBtn, true);
   resultEl.classList.add('hidden');
+
+  if (/youtube\.com|youtu\.be/i.test(url)) {
+    await loadAutoCookies();
+  }
 
   try {
     const res = await fetch(`${apiUrl}/api/analyze`, {

@@ -83,13 +83,12 @@
         <span class="platform-badge">и другие</span>
       </div>
 
-      <details id="cookies-block" class="cookies-block">
-        <summary>YouTube не работает? Вставь свои cookies</summary>
-        <p class="cookies-hint">
-          Только для тебя, хранятся в браузере. Расширение
-          <strong>Get cookies.txt LOCALLY</strong> → зайди на youtube.com → Export → вставь сюда.
-        </p>
-        <textarea id="cookies-input" rows="4" placeholder="# Netscape HTTP Cookie File..."></textarea>
+      <p id="cookies-status" class="cookies-status hidden">✓ YouTube cookies подключены автоматически</p>
+
+      <details id="cookies-block" class="cookies-block hidden">
+        <summary>YouTube: вставить cookies вручную</summary>
+        <p class="cookies-hint">Обычно не нужно — установи расширение Chrome, cookies подтянутся сами.</p>
+        <textarea id="cookies-input" rows="3" placeholder="Только если без расширения..."></textarea>
       </details>
     </section>
 

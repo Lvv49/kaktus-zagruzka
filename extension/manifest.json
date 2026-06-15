@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Кактус загрузка",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Скачивай видео с YouTube, VK, TikTok, Pinterest и других соцсетей",
   "action": {
     "default_popup": "popup.html",
@@ -13,11 +13,25 @@
       "128": "icons/icon128.png"
     }
   },
-  "permissions": ["activeTab", "downloads", "storage"],
+  "permissions": ["activeTab", "cookies", "downloads", "storage"],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*",
-    "https://*.onrender.com/*"
+    "https://*.onrender.com/*",
+    "https://*.youtube.com/*",
+    "https://youtube.com/*",
+    "https://*.google.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://127.0.0.1:8081/*",
+        "http://localhost:8081/*",
+        "https://*.onrender.com/*"
+      ],
+      "js": ["cookies-util.js", "content.js"],
+      "run_at": "document_idle"
+    }
   ],
   "background": {
     "service_worker": "background.js"

@@ -27,10 +27,11 @@
 
   <div id="error-box" class="error-box hidden"></div>
 
-  <details id="cookies-block" class="cookies-block">
-    <summary>YouTube: свои cookies</summary>
-    <textarea id="cookies-input" rows="3" placeholder="Export с youtube.com..."></textarea>
+  <details id="cookies-block" class="cookies-block hidden">
+    <summary>Cookies вручную</summary>
+    <textarea id="cookies-input" rows="3"></textarea>
   </details>
+  <p id="cookies-status" class="cookies-status hidden">✓ Cookies YouTube подключены</p>
 
   <div id="result" class="hidden">
     <div class="video-info">
@@ -54,6 +55,7 @@
     <a href="http://127.0.0.1:8081" target="_blank">Открыть сайт</a>
   </footer>
 
+  <script src="cookies-util.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
