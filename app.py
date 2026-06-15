@@ -20,11 +20,31 @@ STATIC_DIR = BASE_DIR / "static"
 EXTENSION_DIR = BASE_DIR / "extension"
 DOWNLOADS_DIR = BASE_DIR / "downloads"
 DOWNLOADS_DIR.mkdir(exist_ok=True)
+COOKIES_DIR = BASE_DIR / "cookies"
+COOKIES_DIR.mkdir(exist_ok=True)
+COOKIES_FILE = COOKIES_DIR / "youtube.txt"
 
 PUBLIC_URL = (
     os.environ.get("PUBLIC_URL")
     or os.environ.get("RENDER_EXTERNAL_URL", "")
 ).rstrip("/")
+
+IS_RENDER = bool(os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL"))
+
+
+def init_cookies_from_env() -> None:
+    """Загружает cookies из переменной окружения (для Render)."""
+    if COOKIES_FILE.is_file():
+        return
+
+    raw = os.environ.get("YTDLP_COOKIES", "").strip()
+    if not raw:
+        return
+
+    COOKIES_FILE.write_text(raw, encoding="utf-8")
+
+
+init_cookies_from_env()
 
 app = FastAPI(title="Кактус загрузка", version="1.0.0")
 
@@ -99,6 +119,98 @@ def get_format_label(fmt: dict) -> str:
     return " · ".join(parts)
 
 
+def build_ytdl_opts(extra: Optional[dict] = None, browser: Optional[str] = None, use_cookies: bool = True) -> dict:
+    opts: dict = {
+        "quiet": True,
+        "no_warnings": True,
+        "nocheckcertificate": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web", "tv_embedded"],
+            }
+        },
+    }
+    if extra:
+        opts.update(extra)
+
+    if not use_cookies:
+        return opts
+
+    cookies_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
+    if not cookies_file and COOKIES_FILE.is_file():
+        cookies_file = str(COOKIES_FILE)
+
+    if cookies_file and Path(cookies_file).is_file():
+        opts["cookiefile"] = cookies_file
+        return opts
+
+    if os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL"):
+        return opts
+
+    if browser:
+        opts["cookiesfrombrowser"] = (browser,)
+    else:
+        browser_env = os.environ.get("YTDLP_COOKIES_BROWSER", "").strip()
+        if browser_env:
+            opts["cookiesfrombrowser"] = (browser_env,)
+        else:
+            opts["cookiesfrombrowser"] = ("chrome",)
+
+    return opts
+
+
+def cookie_browser_fallbacks() -> list[str]:
+    env = os.environ.get("YTDLP_COOKIES_BROWSER", "").strip()
+    if env:
+        return [b.strip() for b in env.split(",") if b.strip()]
+    return ["chrome", "safari", "firefox", "brave", "edge"]
+
+
+def ytdl_extract(url: str, extra: Optional[dict] = None, download: bool = False) -> dict:
+    base_extra = dict(extra or {})
+    if not download:
+        base_extra.setdefault("skip_download", True)
+        base_extra.setdefault("ignore_no_formats_error", True)
+    base_extra.setdefault("extract_flat", False)
+
+    attempts: list[tuple[str, Optional[str], bool]] = [("default", None, False)]
+
+    cookies_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
+    if not cookies_file and COOKIES_FILE.is_file():
+        cookies_file = str(COOKIES_FILE)
+
+    if cookies_file and Path(cookies_file).is_file():
+        attempts.append(("cookies-file", None, True))
+    elif not IS_RENDER:
+        for browser in cookie_browser_fallbacks():
+            attempts.append((f"browser-{browser}", browser, True))
+
+    last_error: Optional[Exception] = None
+    for _name, browser, use_cookies in attempts:
+        try:
+            with yt_dlp.YoutubeDL(build_ytdl_opts(base_extra, browser=browser, use_cookies=use_cookies)) as ydl:
+                return ydl.extract_info(url, download=download)
+        except yt_dlp.utils.DownloadError as e:
+            last_error = e
+            err = str(e).lower()
+            if any(
+                word in err
+                for word in ("bot", "sign in", "cookies", "operation not permitted", "could not copy")
+            ):
+                continue
+            raise
+
+    if last_error:
+        raise last_error
+    raise yt_dlp.utils.DownloadError("Не удалось получить видео")
+
+
+YOUTUBE_COOKIE_HINT = (
+    "На Render: экспортируй cookies YouTube и добавь в Environment → YTDLP_COOKIES. "
+    "Локально: войди в YouTube в Chrome и перезапусти ./start.sh"
+)
+
+
 def is_useful_format(fmt: dict) -> bool:
     if fmt.get("format_id") == "storyboard":
         return False
@@ -148,19 +260,13 @@ async def analyze_video(req: AnalyzeRequest):
     if not url:
         raise HTTPException(400, "Вставьте ссылку на видео")
 
-    ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "extract_flat": False,
-        "nocheckcertificate": True,
-    }
-
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = ytdl_extract(url, download=False)
     except yt_dlp.utils.DownloadError as e:
-        raise HTTPException(400, f"Не удалось получить видео: {str(e)}")
+        msg = str(e)
+        if "bot" in msg.lower() or "sign in" in msg.lower():
+            msg += ". " + YOUTUBE_COOKIE_HINT
+        raise HTTPException(400, f"Не удалось получить видео: {msg}")
     except Exception as e:
         raise HTTPException(500, f"Ошибка сервера: {str(e)}")
 
@@ -230,39 +336,37 @@ async def download_video(
     tmp_dir = DOWNLOADS_DIR / job_id
     tmp_dir.mkdir(parents=True)
 
-    ydl_opts = {
+    extra = {
         "format": format_id,
         "outtmpl": str(tmp_dir / "%(title)s.%(ext)s"),
-        "quiet": True,
-        "no_warnings": True,
-        "nocheckcertificate": True,
         "merge_output_format": "mp4",
     }
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        info = ytdl_extract(url, extra=extra, download=True)
+
+        with yt_dlp.YoutubeDL(build_ytdl_opts(extra, use_cookies=False)) as ydl:
             filename = ydl.prepare_filename(info)
 
-            if not os.path.exists(filename):
-                for f in tmp_dir.iterdir():
-                    if f.is_file():
-                        filename = str(f)
-                        break
+        if not os.path.exists(filename):
+            for f in tmp_dir.iterdir():
+                if f.is_file():
+                    filename = str(f)
+                    break
 
-            if not os.path.exists(filename):
-                raise HTTPException(500, "Файл не был создан")
+        if not os.path.exists(filename):
+            raise HTTPException(500, "Файл не был создан")
 
-            title = sanitize_filename(info.get("title", "video"))
-            ext = Path(filename).suffix or ".mp4"
-            safe_name = f"{title}{ext}"
+        title = sanitize_filename(info.get("title", "video"))
+        ext = Path(filename).suffix or ".mp4"
+        safe_name = f"{title}{ext}"
 
-            return FileResponse(
-                filename,
-                media_type="application/octet-stream",
-                filename=safe_name,
-                background=_cleanup(tmp_dir),
-            )
+        return FileResponse(
+            filename,
+            media_type="application/octet-stream",
+            filename=safe_name,
+            background=_cleanup(tmp_dir),
+        )
     except yt_dlp.utils.DownloadError as e:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise HTTPException(400, f"Ошибка скачивания: {str(e)}")

@@ -1,5 +1,8 @@
 venv/
-downloads/
+downloads/*
+!downloads/.gitkeep
+cookies/*
+!cookies/.gitkeep
 __pycache__/
 *.pyc
 .DS_Store
