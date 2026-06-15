@@ -79,10 +79,10 @@ def get_innertube_api_key() -> str:
         headers={"User-Agent": WEB_UA, "Accept-Language": "en-US,en;q=0.9"},
     )
     try:
-    with _urlopen(req, timeout=15) as resp:
-        html = resp.read().decode("utf-8", errors="replace")
-        match = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
-        key = match.group(1) if match else FALLBACK_API_KEY
+        with _urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+            match = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
+            key = match.group(1) if match else FALLBACK_API_KEY
     except Exception:
         key = FALLBACK_API_KEY
 
