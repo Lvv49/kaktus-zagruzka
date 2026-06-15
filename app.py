@@ -149,14 +149,20 @@ def build_ytdl_opts(
     browser: Optional[str] = None,
     use_cookies: bool = True,
     cookiefile: Optional[str] = None,
+    player_clients: Optional[list[str]] = None,
 ) -> dict:
+    clients = player_clients or (
+        ["ios", "android", "mweb", "web", "tv_embedded", "web_creator"]
+        if IS_RENDER
+        else ["ios", "android", "mweb", "web", "tv_embedded"]
+    )
     opts: dict = {
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios", "android", "mweb", "web", "tv_embedded"],
+                "player_client": clients,
             }
         },
     }
@@ -200,6 +206,39 @@ def cookie_browser_fallbacks() -> list[str]:
     return ["chrome", "safari", "firefox", "brave", "edge"]
 
 
+def count_useful_formats(info: dict) -> int:
+    return len([f for f in info.get("formats", []) if is_useful_format(f)])
+
+
+def fallback_formats() -> list[dict]:
+    return [
+        {
+            "format_id": "bv*+ba/b",
+            "label": "MP4 · лучшее качество",
+            "ext": "mp4",
+            "resolution": "—",
+            "filesize": "—",
+            "has_video": True,
+            "has_audio": True,
+            "quality": 9999,
+            "height": 0,
+            "recommended": True,
+        },
+        {
+            "format_id": "b",
+            "label": "MP4 · хорошее качество",
+            "ext": "mp4",
+            "resolution": "—",
+            "filesize": "—",
+            "has_video": True,
+            "has_audio": True,
+            "quality": 5000,
+            "height": 0,
+            "recommended": False,
+        },
+    ]
+
+
 def ytdl_extract(
     url: str,
     extra: Optional[dict] = None,
@@ -212,34 +251,46 @@ def ytdl_extract(
         base_extra.setdefault("ignore_no_formats_error", True)
     base_extra.setdefault("extract_flat", False)
 
+    client_sets = [
+        None,
+        ["ios", "android"],
+        ["mweb", "web_creator"],
+        ["tv_embedded", "web"],
+    ]
+
     with temp_cookie_file(user_cookies) as user_cookie_path:
-        attempts: list[tuple[Optional[str], Optional[str], bool]] = [
-            (None, None, False),
-        ]
+        attempts: list[tuple[Optional[str], Optional[str], bool, Optional[list[str]]]] = []
 
-        if user_cookie_path:
-            attempts.insert(0, (user_cookie_path, None, True))
+        for clients in client_sets:
+            if user_cookie_path:
+                attempts.append((user_cookie_path, None, True, clients))
+            attempts.append((None, None, False, clients))
 
-        cookies_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
-        if not cookies_file and COOKIES_FILE.is_file():
-            cookies_file = str(COOKIES_FILE)
-        if cookies_file and Path(cookies_file).is_file() and not user_cookie_path:
-            attempts.append((cookies_file, None, True))
-        elif not IS_RENDER and not user_cookie_path:
+        if not user_cookie_path and not IS_RENDER:
             for browser in cookie_browser_fallbacks():
-                attempts.append((None, browser, True))
+                attempts.append((None, browser, True, None))
 
+        best_info: Optional[dict] = None
+        best_count = -1
         last_error: Optional[Exception] = None
-        for cookiefile, browser, use_cookies in attempts:
+
+        for cookiefile, browser, use_cookies, clients in attempts:
             try:
                 opts = build_ytdl_opts(
                     base_extra,
                     browser=browser,
                     use_cookies=use_cookies,
                     cookiefile=cookiefile,
+                    player_clients=clients,
                 )
                 with yt_dlp.YoutubeDL(opts) as ydl:
-                    return ydl.extract_info(url, download=download)
+                    info = ydl.extract_info(url, download=download)
+                count = count_useful_formats(info)
+                if count > best_count:
+                    best_count = count
+                    best_info = info
+                if count >= 3:
+                    return info
             except yt_dlp.utils.DownloadError as e:
                 last_error = e
                 err = str(e).lower()
@@ -249,6 +300,9 @@ def ytdl_extract(
                 ):
                     continue
                 raise
+
+        if best_info is not None:
+            return best_info
 
         if last_error:
             raise last_error
@@ -264,11 +318,11 @@ YOUTUBE_COOKIE_HINT = (
 def is_useful_format(fmt: dict) -> bool:
     if fmt.get("format_id") == "storyboard":
         return False
+    if fmt.get("format_id", "").startswith("sb"):
+        return False
     if fmt.get("vcodec") == "none" and fmt.get("acodec") == "none":
         return False
-    if fmt.get("url") is None and fmt.get("manifest_url") is None:
-        return False
-    return True
+    return bool(fmt.get("format_id"))
 
 
 @app.get("/api/config")
@@ -360,8 +414,11 @@ async def analyze_video(req: AnalyzeRequest):
         reverse=True,
     )
 
+    if not formats and info.get("title"):
+        formats = fallback_formats()
+
     if not formats:
-        raise HTTPException(400, "Доступные форматы не найдены")
+        raise HTTPException(400, "Доступные форматы не найдены. Установи расширение Chrome и зайди на youtube.com")
 
     return {
         "title": info.get("title", "Без названия"),

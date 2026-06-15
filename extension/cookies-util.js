@@ -1,11 +1,19 @@
 async function fetchYoutubeCookiesNetscape() {
-  const domains = ['youtube.com', 'google.com'];
   const all = [];
+  const urls = [
+    'https://www.youtube.com/',
+    'https://youtube.com/',
+    'https://www.google.com/',
+  ];
 
-  for (const domain of domains) {
-    const list = await chrome.cookies.getAll({ domain });
+  for (const url of urls) {
+    const list = await chrome.cookies.getAll({ url });
     all.push(...list);
   }
+
+  const extra = await chrome.cookies.getAll({ domain: 'youtube.com' });
+  const google = await chrome.cookies.getAll({ domain: 'google.com' });
+  all.push(...extra, ...google);
 
   const googleKeep = new Set([
     'SID', 'HSID', 'SSID', 'APISID', 'SAPISID', 'LOGIN_INFO', 'NID', 'PREF', '__Secure-1PSID', '__Secure-3PSID',
