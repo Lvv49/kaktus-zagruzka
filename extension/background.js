@@ -14,7 +14,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     chrome.downloads.download({
       url: msg.url,
       filename: msg.filename,
-      saveAs: true,
+      saveAs: false,
     }, (id) => {
       if (chrome.runtime.lastError) {
         sendResponse({ ok: false, error: chrome.runtime.lastError.message });

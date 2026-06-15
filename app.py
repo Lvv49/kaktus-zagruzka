@@ -498,22 +498,15 @@ def build_download_format_attempts(
     if not is_youtube_url(url):
         return [format_id]
 
-    attempts: list[str] = []
-
-    primary = format_id_to_ytdl(format_id)
-    attempts.append(primary)
+    attempts: list[str] = [format_id_to_ytdl(format_id)]
 
     resolved = resolve_format_for_download(url, format_id, cookies)
-    if resolved and resolved not in attempts:
-        if resolved != format_id and not resolved.startswith("best") and "[" not in resolved:
-            attempts.insert(0, resolved)
+    if resolved and re.fullmatch(r"\d+", str(resolved)):
+        attempts.insert(0, resolved)
 
-    for fallback in youtube_reliable_formats():
-        mapped = format_id_to_ytdl(fallback) if fallback in ("b", "bv*+ba/b") else fallback
-        if mapped not in attempts:
-            attempts.append(mapped)
+    attempts.append(format_id_to_ytdl("b"))
 
-    return list(dict.fromkeys(attempts))
+    return list(dict.fromkeys(attempts))[:3]
 
 
 def store_download_token(url: str, format_id: str, cookies: Optional[str]) -> str:
@@ -526,6 +519,7 @@ def store_download_token(url: str, format_id: str, cookies: Optional[str]) -> st
         "expires": time.time() + TOKEN_TTL_SEC,
         "status": "pending",
         "error": None,
+        "message": "В очереди",
         "file_path": None,
         "filename": None,
         "tmp_dir": None,
@@ -1105,6 +1099,7 @@ async def download_status(token: str):
         "status": job["status"],
         "error": job.get("error"),
         "filename": job.get("filename"),
+        "message": job.get("message"),
     }
 
 
@@ -1192,9 +1187,7 @@ def _download_to_file_with_fallbacks(
             return _download_to_file_sync(url, fmt_attempt, cookies, tmp_dir)
         except yt_dlp.utils.DownloadError as e:
             last_error = e
-            if is_format_unavailable_error(e) or is_bot_ytdl_error(e):
-                continue
-            raise
+            continue
 
     if last_error:
         raise last_error
@@ -1207,6 +1200,7 @@ async def process_download_job(token: str) -> None:
         return
 
     job["status"] = "processing"
+    job["message"] = "Скачиваем с YouTube..."
     tmp_dir = DOWNLOADS_DIR / token
     tmp_dir.mkdir(parents=True, exist_ok=True)
     job["tmp_dir"] = str(tmp_dir)
@@ -1216,16 +1210,24 @@ async def process_download_job(token: str) -> None:
     selected_format = job["format_id"]
 
     try:
-        file_path, safe_name = await asyncio.to_thread(
-            _download_to_file_with_fallbacks,
-            url,
-            selected_format,
-            cookies,
-            tmp_dir,
+        file_path, safe_name = await asyncio.wait_for(
+            asyncio.to_thread(
+                _download_to_file_with_fallbacks,
+                url,
+                selected_format,
+                cookies,
+                tmp_dir,
+            ),
+            timeout=900,
         )
         job["file_path"] = file_path
         job["filename"] = safe_name
         job["status"] = "ready"
+        job["message"] = "Файл готов"
+    except asyncio.TimeoutError:
+        job["status"] = "error"
+        job["error"] = "Слишком долго. Выберите «Авто» и попробуйте снова."
+        shutil.rmtree(tmp_dir, ignore_errors=True)
     except yt_dlp.utils.DownloadError as e:
         job["status"] = "error"
         job["error"] = f"Ошибка скачивания: {friendly_ytdl_error(e, has_user_cookies(cookies))}"

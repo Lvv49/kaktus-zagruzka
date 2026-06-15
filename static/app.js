@@ -48,11 +48,18 @@ function requestBody(url, extra = {}) {
 
 function showError(msg) {
   errorBox.textContent = msg;
+  errorBox.classList.remove('hidden', 'status-info');
+}
+
+function showProgress(msg) {
+  errorBox.textContent = msg;
   errorBox.classList.remove('hidden');
+  errorBox.classList.add('status-info');
 }
 
 function hideError() {
   errorBox.classList.add('hidden');
+  errorBox.classList.remove('status-info');
 }
 
 function setLoading(btn, loading) {
@@ -146,7 +153,7 @@ async function fetchPreparedFile(downloadUrl, filename, btnText) {
 }
 
 async function pollDownloadReady(token, onProgress) {
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < 180; i++) {
     const res = await fetch(`/api/download/status/${token}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -156,18 +163,28 @@ async function pollDownloadReady(token, onProgress) {
     if (data.status === 'error') {
       throw new Error(data.error || 'Ошибка скачивания');
     }
-    if (onProgress) onProgress(i, data.status);
+    const secs = i * 2;
+    const msg = data.message || (data.status === 'processing' ? 'Готовим файл на сервере...' : 'Запускаем...');
+    if (onProgress) onProgress(`${msg} (${secs}с)`);
     await sleep(2000);
   }
-  throw new Error('Слишком долго. Выберите формат «хорошее качество» и попробуйте снова.');
+  throw new Error('Слишком долго. Выберите «Авто» и попробуйте снова.');
+}
+
+function startBrowserDownload(downloadUrl, filename) {
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = filename || '';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 function defaultFormatIndex(formats) {
-  let idx = formats.findIndex((f) => f.recommended);
+  let idx = formats.findIndex((f) => f.format_id === 'b');
   if (idx >= 0) return idx;
-  idx = formats.findIndex((f) => f.format_id === 'b');
-  if (idx >= 0) return idx;
-  idx = formats.findIndex((f) => f.format_id && f.format_id.startsWith('q:720'));
+  idx = formats.findIndex((f) => f.recommended);
   if (idx >= 0) return idx;
   idx = formats.findIndex((f) => f.filesize && f.filesize !== '—');
   if (idx >= 0) return idx;
@@ -290,7 +307,6 @@ async function download() {
 
   hideError();
   setLoading(downloadBtn, true);
-  const btnText = downloadBtn.querySelector('.btn-text');
 
   if (isYoutube(currentUrl) && !getCookies()) {
     showError('Для YouTube установите расширение Chrome, зайдите на youtube.com и войдите в аккаунт.');
@@ -299,7 +315,7 @@ async function download() {
   }
 
   try {
-    if (btnText) btnText.textContent = 'Подключаемся...';
+    showProgress('Подключаемся к серверу...');
 
     const prep = await fetch('/api/download/prepare', {
       method: 'POST',
@@ -314,23 +330,15 @@ async function download() {
       throw new Error(data.detail || 'Ошибка скачивания');
     }
 
-    const ready = await pollDownloadReady(data.token, (i, status) => {
-      if (btnText) {
-        btnText.textContent = status === 'processing' ? `Готовим... ${i * 2}с` : 'Ожидаем...';
-      }
-    });
+    const ready = await pollDownloadReady(data.token, showProgress);
 
-    await fetchPreparedFile(
-      data.url,
-      ready.filename || 'video.mp4',
-      btnText,
-    );
+    showProgress('Скачиваем файл...');
+    startBrowserDownload(data.url, ready.filename || 'video.mp4');
 
-    hideError();
+    showProgress('Готово! Файл сохраняется в папку загрузок.');
   } catch (err) {
     showError(err.message);
   } finally {
-    if (btnText) btnText.textContent = 'Скачать';
     setLoading(downloadBtn, false);
   }
 }

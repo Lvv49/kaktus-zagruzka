@@ -130,6 +130,12 @@ input[type="url"]:focus {
   color: #fca5a5;
 }
 
+.error-box.status-info {
+  background: rgba(76, 175, 80, 0.12);
+  border-color: rgba(76, 175, 80, 0.35);
+  color: #86efac;
+}
+
 .video-info {
   display: flex;
   gap: 10px;

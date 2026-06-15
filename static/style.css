@@ -275,6 +275,12 @@ input[type="url"]:focus {
   font-size: 0.95rem;
 }
 
+.error-box.status-info {
+  background: rgba(76, 175, 80, 0.12);
+  border-color: rgba(76, 175, 80, 0.35);
+  color: #86efac;
+}
+
 .video-card {
   display: flex;
   gap: 1.25rem;
