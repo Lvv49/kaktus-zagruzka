@@ -332,8 +332,22 @@ input[type="url"]:focus {
 .formats-card h3 {
   font-size: 1rem;
   font-weight: 700;
-  margin-bottom: 1rem;
   color: var(--text-muted);
+}
+
+.formats-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.formats-count {
+  font-size: 0.85rem;
+  color: var(--green-bright);
+  font-weight: 600;
 }
 
 .formats-list {

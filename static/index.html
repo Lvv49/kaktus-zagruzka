@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
   <div class="bg-glow"></div>
@@ -71,7 +71,10 @@
       </div>
 
       <div class="card formats-card">
-        <h3>Выберите формат</h3>
+        <div class="formats-header">
+          <h3>Выберите формат</h3>
+          <span id="formats-count" class="formats-count"></span>
+        </div>
         <div id="formats-list" class="formats-list"></div>
         <button id="download-btn" class="btn btn-download" disabled>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -90,6 +93,6 @@
     <p>Кактус загрузка · Бесплатный сервис для скачивания видео</p>
   </footer>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>

@@ -83,17 +83,37 @@ function renderFormats(formats) {
   selectedFormatId = null;
   downloadBtn.disabled = true;
 
+  const countEl = document.getElementById('formats-count');
+  if (countEl) {
+    countEl.textContent = `Найдено форматов: ${formats.length}`;
+  }
+
   formats.forEach((fmt, i) => {
     const item = document.createElement('label');
     item.className = 'format-item' + (i === 0 ? ' selected' : '');
-    const badge = fmt.recommended ? '<span class="format-badge">рекомендуем</span>' : '';
-    item.innerHTML = `
-      <input type="radio" name="format" value="${fmt.format_id}" ${i === 0 ? 'checked' : ''}>
-      <span class="format-label">${fmt.label}${badge}</span>
-      <span class="format-size">${fmt.filesize}</span>
-    `;
 
-    const radio = item.querySelector('input');
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'format';
+    radio.value = fmt.format_id;
+    radio.checked = i === 0;
+
+    const label = document.createElement('span');
+    label.className = 'format-label';
+    label.textContent = fmt.label;
+    if (fmt.recommended) {
+      const badge = document.createElement('span');
+      badge.className = 'format-badge';
+      badge.textContent = 'рекомендуем';
+      label.appendChild(badge);
+    }
+
+    const size = document.createElement('span');
+    size.className = 'format-size';
+    size.textContent = fmt.filesize || '—';
+
+    item.append(radio, label, size);
+
     radio.addEventListener('change', () => {
       document.querySelectorAll('.format-item').forEach(el => el.classList.remove('selected'));
       item.classList.add('selected');

@@ -463,7 +463,10 @@ async def get_config():
 
 @app.get("/")
 async def root():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/api/extension/download")
