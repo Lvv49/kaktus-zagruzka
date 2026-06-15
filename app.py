@@ -1059,9 +1059,10 @@ async def analyze_video(req: AnalyzeRequest):
         raise HTTPException(400, "Вставьте ссылку на видео")
 
     if is_youtube_url(url):
+        had_cookies = has_user_cookies(req.cookies)
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(youtube_innertube.innertube_analyze, url),
+                asyncio.to_thread(youtube_innertube.innertube_analyze, url, req.cookies),
                 timeout=20.0 if IS_RENDER else 45.0,
             )
         except asyncio.TimeoutError:
@@ -1078,10 +1079,41 @@ async def analyze_video(req: AnalyzeRequest):
         except Exception:
             pass
 
+        try:
+            ytdl_extra = {"socket_timeout": 12, "retries": 1, "fragment_retries": 1} if IS_RENDER else None
+            info = await asyncio.wait_for(
+                asyncio.to_thread(ytdl_extract, url, ytdl_extra, False, req.cookies, True),
+                timeout=18.0 if IS_RENDER else 35.0,
+            )
+            if info and (info.get("title") or count_useful_formats(info)):
+                if info.get("_type") == "playlist":
+                    entries = info.get("entries", [])
+                    if entries:
+                        info = entries[0] or info
+                formats = build_format_list(info, source_url=url)
+                if not formats and info.get("title"):
+                    formats = youtube_simple_formats()
+                if formats:
+                    return {
+                        "title": info.get("title", "Без названия"),
+                        "thumbnail": pick_thumbnail(info),
+                        "video_id": info.get("id"),
+                        "duration": format_duration(info.get("duration")),
+                        "uploader": info.get("uploader") or info.get("channel") or "—",
+                        "platform": "YouTube",
+                        "formats": formats,
+                        "formats_estimated": count_useful_formats(info) == 0,
+                        "needs_cookies": not had_cookies,
+                    }
+        except Exception:
+            pass
+
         if IS_RENDER:
             raise HTTPException(
                 503,
-                "YouTube временно недоступен. Подождите минуту и попробуйте снова.",
+                "YouTube блокирует облачный сервер. Установите расширение Chrome — "
+                "оно скачивает с вашего ПК (как SaveFrom Helper). "
+                "VK, TikTok и другие платформы работают без расширения.",
             )
 
     info = None

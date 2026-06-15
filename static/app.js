@@ -210,6 +210,79 @@ function renderFormats(formats) {
   });
 }
 
+const KAKTUS_EXT = 'kaktus-ext';
+
+let extensionAvailable = localStorage.getItem('kaktus_extension') === '1';
+
+window.addEventListener('kaktus-extension-ready', () => {
+  extensionAvailable = true;
+  const status = document.getElementById('cookies-status');
+  if (status) {
+    status.textContent = '✓ Расширение подключено — YouTube с вашего ПК';
+    status.classList.remove('hidden');
+  }
+});
+
+function extCall(action, payload = {}, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const timer = setTimeout(() => {
+      window.removeEventListener('message', onMessage);
+      reject(new Error('Расширение не отвечает'));
+    }, timeoutMs);
+
+    function onMessage(event) {
+      if (event.source !== window || !event.data || event.data.channel !== KAKTUS_EXT) return;
+      if (event.data.requestId !== requestId) return;
+      window.removeEventListener('message', onMessage);
+      clearTimeout(timer);
+      if (event.data.pong) {
+        resolve({ ok: true });
+        return;
+      }
+      if (event.data.ok === false) {
+        reject(new Error(event.data.error || 'Ошибка расширения'));
+        return;
+      }
+      resolve(event.data);
+    }
+
+    window.addEventListener('message', onMessage);
+    window.postMessage({ channel: KAKTUS_EXT, requestId, action, payload }, '*');
+  });
+}
+
+async function pingExtension() {
+  if (!extensionAvailable) return false;
+  try {
+    await extCall('ping', {}, 2500);
+    return true;
+  } catch {
+    extensionAvailable = false;
+    return false;
+  }
+}
+
+async function analyzeYoutube(url) {
+  if (await pingExtension()) {
+    showProgress('Ищем форматы через расширение...');
+    const data = await extCall('youtubeAnalyze', { url }, 45000);
+    return data;
+  }
+  showProgress('Ищем форматы...');
+  return analyzeCloud(url);
+}
+
+async function downloadYoutubeViaExtension() {
+  showProgress('Скачиваем через расширение...');
+  const data = await extCall('youtubeDownload', {
+    url: currentUrl,
+    formatId: selectedFormatId,
+  }, 120000);
+  const note = data.note ? ` (${data.note})` : '';
+  showProgress(`Готово!${note} Файл сохраняется в папку загрузок.`);
+}
+
 function fetchWithTimeout(url, options = {}, timeoutMs = 35000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -245,7 +318,7 @@ async function analyze() {
   showProgress('Ищем форматы...');
 
   try {
-    const data = await analyzeCloud(url);
+    const data = isYoutube(url) ? await analyzeYoutube(url) : await analyzeCloud(url);
     hideError();
     currentUrl = url;
     videoData = data;
@@ -312,7 +385,9 @@ async function download() {
   setLoading(downloadBtn, true);
 
   try {
-    if (isYoutube(currentUrl)) {
+    if (isYoutube(currentUrl) && await pingExtension()) {
+      await downloadYoutubeViaExtension();
+    } else if (isYoutube(currentUrl)) {
       await downloadYoutubeDirect();
     } else {
       await downloadCloud();

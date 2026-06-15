@@ -66,6 +66,22 @@ def get_cached_player(video_id: str) -> Optional[dict]:
     return entry["player"]
 
 
+def _cookie_header(cookies: Optional[str]) -> str:
+    if not cookies or not cookies.strip():
+        return ""
+    text = cookies.strip()
+    if "# Netscape" in text:
+        pairs = []
+        for line in text.splitlines():
+            if line.startswith("#") or not line.strip():
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 7:
+                pairs.append(f"{parts[5]}={parts[6]}")
+        return "; ".join(pairs)
+    return text
+
+
 def _urlopen(req: urllib.request.Request, timeout: int | None = None):
     return urllib.request.urlopen(req, timeout=timeout or HTTP_TIMEOUT, context=_SSL_CTX)
 
@@ -185,7 +201,7 @@ def _is_skippable_error(reason: str) -> bool:
     )
 
 
-def _innertube_request(video_id: str, client: dict) -> dict:
+def _innertube_request(video_id: str, client: dict, cookies: Optional[str] = None) -> dict:
     api_key = get_innertube_api_key()
     body = json.dumps({
         "context": {
@@ -194,15 +210,19 @@ def _innertube_request(video_id: str, client: dict) -> dict:
         },
         "videoId": video_id,
     }).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": client["userAgent"],
+        "Origin": "https://www.youtube.com",
+        "Referer": f"https://www.youtube.com/watch?v={video_id}",
+    }
+    cookie_hdr = _cookie_header(cookies)
+    if cookie_hdr:
+        headers["Cookie"] = cookie_hdr
     req = urllib.request.Request(
         f"https://www.youtube.com/youtubei/v1/player?key={api_key}",
         data=body,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": client["userAgent"],
-            "Origin": "https://www.youtube.com",
-            "Referer": f"https://www.youtube.com/watch?v={video_id}",
-        },
+        headers=headers,
         method="POST",
     )
     for attempt in range(2 if IS_CLOUD else 3):
@@ -218,13 +238,17 @@ def _innertube_request(video_id: str, client: dict) -> dict:
             raise
 
 
-def _fetch_player_from_watch_page(video_id: str) -> dict:
+def _fetch_player_from_watch_page(video_id: str, cookies: Optional[str] = None) -> dict:
+    headers = {
+        "User-Agent": WEB_UA,
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    cookie_hdr = _cookie_header(cookies)
+    if cookie_hdr:
+        headers["Cookie"] = cookie_hdr
     req = urllib.request.Request(
         f"https://www.youtube.com/watch?v={video_id}&bpctr=9999999999&has_verified=1",
-        headers={
-            "User-Agent": WEB_UA,
-            "Accept-Language": "en-US,en;q=0.9",
-        },
+        headers=headers,
     )
     for attempt in range(2 if IS_CLOUD else 3):
         try:
@@ -245,17 +269,20 @@ def _fetch_player_from_watch_page(video_id: str) -> dict:
     raise ValueError("Не удалось прочитать страницу YouTube")
 
 
-def fetch_innertube_player(video_id: str) -> dict:
+def fetch_innertube_player(video_id: str, cookies: Optional[str] = None) -> dict:
     cached = get_cached_player(video_id)
     if cached:
         return cached
 
-    try:
-        player = _fetch_player_from_watch_page(video_id)
-        _cache_player(video_id, player)
-        return player
-    except Exception as watch_error:
-        last_error = str(watch_error)
+    last_error = "Не удалось получить видео с YouTube"
+
+    if not IS_CLOUD:
+        try:
+            player = _fetch_player_from_watch_page(video_id, cookies)
+            _cache_player(video_id, player)
+            return player
+        except Exception as watch_error:
+            last_error = str(watch_error)
 
     clients = [
         {
@@ -290,11 +317,9 @@ def fetch_innertube_player(video_id: str) -> dict:
             "userAgent": ANDROID_VR_UA,
         })
 
-    last_error = "Не удалось получить видео с YouTube"
-
     for client in clients:
         try:
-            data = _innertube_request(video_id, client)
+            data = _innertube_request(video_id, client, cookies)
             if _player_is_usable(data):
                 _cache_player(video_id, data)
                 return data
@@ -388,12 +413,12 @@ def build_innertube_format_list(progressive: list, adaptive: list) -> list[dict]
     return formats
 
 
-def innertube_analyze(url: str) -> dict:
+def innertube_analyze(url: str, cookies: Optional[str] = None) -> dict:
     video_id = extract_youtube_id(url)
     if not video_id:
         raise ValueError("Неверная ссылка YouTube")
 
-    player = fetch_innertube_player(video_id)
+    player = fetch_innertube_player(video_id, cookies)
     details = player.get("videoDetails") or {}
     progressive, adaptive = _parse_formats(player)
     if not progressive and not adaptive:
