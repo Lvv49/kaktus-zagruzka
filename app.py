@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import shutil
@@ -50,7 +51,7 @@ def init_cookies_from_env() -> None:
 init_cookies_from_env()
 
 DOWNLOAD_TOKENS: dict[str, dict] = {}
-TOKEN_TTL_SEC = 600
+TOKEN_TTL_SEC = 1800
 
 app = FastAPI(title="Кактус загрузка", version="1.0.0")
 
@@ -307,58 +308,24 @@ def build_download_format_attempts(
     url: str,
     cookies: Optional[str] = None,
 ) -> list[str]:
-    attempts: list[str] = []
+    attempts = [format_id]
 
     if is_youtube_url(url):
-        try:
-            info = ytdl_extract(
-                url,
-                download=False,
-                user_cookies=cookies,
-                fast=not bool(cookies and cookies.strip()),
-            )
-            available = {
-                str(f["format_id"])
-                for f in info.get("formats", [])
-                if is_useful_format(f)
-            }
-
-            if format_id in available:
-                attempts.append(format_id)
-            elif format_id == "bestaudio":
-                audio_id = pick_audio_format(info)
-                if audio_id:
-                    attempts.append(audio_id)
-            else:
-                max_height = parse_preset_height(format_id)
-                picked = pick_progressive_format(info, max_height)
-                if picked:
-                    attempts.append(picked)
-                elif max_height:
-                    for h in [max_height, 720, 480, 360]:
-                        if h <= max_video_height(info) or max_video_height(info) == 0:
-                            attempts.append(
-                                f"bestvideo[height<={h}]+bestaudio/best[height<={h}]"
-                            )
-        except Exception:
-            pass
-
-    if format_id not in attempts:
-        attempts.append(format_id)
-
-    if is_youtube_url(url):
-        for fallback in ("b", "bv*+ba/b", "bestvideo+bestaudio/best", "best", "worst"):
+        for fallback in ("b", "bv*+ba/b"):
             if fallback not in attempts:
                 attempts.append(fallback)
 
     return list(dict.fromkeys(attempts))
 
 
-def prioritize_download_formats(attempts: list[str]) -> list[str]:
-    quick = [a for a in attempts if a in ("b", "bv*+ba/b", "worst", "best")]
-    numeric = [a for a in attempts if re.fullmatch(r"\d+", a)]
-    merge = [a for a in attempts if a not in quick and a not in numeric]
-    return list(dict.fromkeys(quick + numeric + merge))
+def prioritize_download_formats(attempts: list[str], selected: str) -> list[str]:
+    ordered: list[str] = []
+    if selected in attempts:
+        ordered.append(selected)
+    for attempt in attempts:
+        if attempt not in ordered:
+            ordered.append(attempt)
+    return ordered
 
 
 def build_ytdl_format_string(
@@ -367,7 +334,8 @@ def build_ytdl_format_string(
     cookies: Optional[str] = None,
 ) -> str:
     attempts = prioritize_download_formats(
-        build_download_format_attempts(format_id, url, cookies)
+        build_download_format_attempts(format_id, url, cookies),
+        format_id,
     )
     return "/".join(attempts)
 
@@ -991,7 +959,14 @@ async def _do_download_once(
         "socket_timeout": 60,
     }
 
-    info = ytdl_extract(url, extra=extra, download=True, user_cookies=cookies)
+    info = await asyncio.to_thread(
+        ytdl_extract,
+        url,
+        extra,
+        True,
+        cookies,
+        False,
+    )
 
     with yt_dlp.YoutubeDL(build_ytdl_opts(extra, use_cookies=False)) as ydl:
         filename = ydl.prepare_filename(info)
@@ -1032,35 +1007,22 @@ async def _do_download(url: str, format_id: str, cookies: Optional[str]):
     tmp_dir = DOWNLOADS_DIR / job_id
     tmp_dir.mkdir(parents=True)
 
-    attempts = prioritize_download_formats(
-        build_download_format_attempts(format_id, url, cookies)
-    )
-    last_error: Optional[Exception] = None
+    format_string = build_ytdl_format_string(format_id, url, cookies)
 
-    for fmt_attempt in attempts:
-        try:
-            return await _do_download_once(url, fmt_attempt, cookies, tmp_dir)
-        except yt_dlp.utils.DownloadError as e:
-            last_error = e
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            tmp_dir.mkdir(parents=True)
-            if is_format_unavailable_error(e):
-                continue
-            break
-        except HTTPException:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise
-        except Exception as e:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise HTTPException(500, f"Ошибка: {str(e)}")
-
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-    if last_error:
+    try:
+        return await _do_download_once(url, format_string, cookies, tmp_dir)
+    except yt_dlp.utils.DownloadError as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         raise HTTPException(
             400,
-            f"Ошибка скачивания: {friendly_ytdl_error(last_error, has_user_cookies(cookies))}",
+            f"Ошибка скачивания: {friendly_ytdl_error(e, has_user_cookies(cookies))}",
         )
-    raise HTTPException(400, "Не удалось скачать видео")
+    except HTTPException:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+    except Exception as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(500, f"Ошибка: {str(e)}")
 
 
 def _cleanup(path: Path):

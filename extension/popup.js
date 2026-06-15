@@ -146,6 +146,20 @@ function setThumbnail(thumb, data) {
   tryNext();
 }
 
+function sanitizeFilename(name) {
+  return (name || 'video').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim().slice(0, 120) || 'video';
+}
+
+function defaultFormatIndex(formats) {
+  let idx = formats.findIndex((f) => f.format_id === 'b');
+  if (idx >= 0) return idx;
+  idx = formats.findIndex((f) => f.recommended);
+  if (idx >= 0) return idx;
+  idx = formats.findIndex((f) => f.filesize && f.filesize !== '—');
+  if (idx >= 0) return idx;
+  return 0;
+}
+
 function renderResult(data) {
   document.getElementById('video-title').textContent = data.title;
   document.getElementById('video-meta').textContent =
@@ -162,11 +176,7 @@ function renderResult(data) {
     formatSelect.appendChild(opt);
   });
 
-  let defaultIndex = data.formats.findIndex((f) => f.recommended);
-  if (defaultIndex < 0) {
-    defaultIndex = data.formats.findIndex((f) => f.filesize && f.filesize !== '—');
-  }
-  if (defaultIndex < 0) defaultIndex = 0;
+  let defaultIndex = defaultFormatIndex(data.formats);
   formatSelect.selectedIndex = defaultIndex;
 
   resultEl.classList.remove('hidden');
@@ -229,9 +239,9 @@ async function download() {
   }
 
   try {
-    if (btnText) btnText.textContent = 'Готовим файл...';
+    if (btnText) btnText.textContent = 'Запускаем...';
 
-    const res = await fetch(`${apiUrl}/api/download`, {
+    const prep = await fetch(`${apiUrl}/api/download/prepare`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -241,24 +251,30 @@ async function download() {
       }),
     });
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
+    const data = await prep.json();
+    if (!prep.ok) {
       throw new Error(data.detail || 'Ошибка скачивания');
     }
 
-    if (btnText) btnText.textContent = 'Сохраняем...';
-    const blob = await res.blob();
-    const disposition = res.headers.get('Content-Disposition') || '';
-    const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/i);
-    const filename = match ? decodeURIComponent(match[1]) : 'video.mp4';
+    const filename = `${sanitizeFilename(videoData?.title)}.mp4`;
+    const downloadUrl = `${apiUrl}${data.url}`;
 
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(a.href);
+    await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        { type: 'download', url: downloadUrl, filename },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (resp?.ok) resolve();
+          else reject(new Error(resp?.error || 'Не удалось начать скачивание'));
+        },
+      );
+    });
+
+    errorBox.style.color = '';
+    showError('Скачивание началось — смотрите панель загрузок Chrome (2–5 мин для длинных видео).');
   } catch (err) {
     showError(err.message);
   } finally {
