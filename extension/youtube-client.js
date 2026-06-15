@@ -542,35 +542,29 @@ async function getMediaFetchHeaders(videoId) {
 }
 
 async function setupYoutubeDownloadRules(videoId) {
-  const cookies = await getYoutubeCookieList();
-  const cookieStr = cookieHeader(cookies).slice(0, 7000);
-  const requestHeaders = [
-    { header: 'Referer', operation: 'set', value: `https://www.youtube.com/watch?v=${videoId}` },
-    { header: 'Origin', operation: 'set', value: 'https://www.youtube.com' },
-    {
-      header: 'User-Agent',
-      operation: 'set',
-      value: WEB_USER_AGENT,
-    },
-  ];
-  if (cookieStr) {
-    requestHeaders.push({ header: 'Cookie', operation: 'set', value: cookieStr });
-  }
-
+  await clearYoutubeDownloadRules();
   await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [DNR_RULE_ID],
     addRules: [{
       id: DNR_RULE_ID,
       priority: 1,
       action: {
         type: 'modifyHeaders',
-        requestHeaders,
+        requestHeaders: [
+          { header: 'Referer', operation: 'set', value: `https://www.youtube.com/watch?v=${videoId}` },
+          { header: 'Origin', operation: 'set', value: 'https://www.youtube.com' },
+        ],
       },
       condition: {
-        regexFilter: '^https://.*(googlevideo\\.com|youtube\\.com).*',
-        resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest', 'media', 'other'],
+        urlFilter: '||googlevideo.com/videoplayback',
+        resourceTypes: ['xmlhttprequest', 'media', 'other'],
       },
     }],
+  });
+}
+
+async function clearYoutubeDownloadRules() {
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: [DNR_RULE_ID],
   });
 }
 
@@ -649,6 +643,8 @@ async function downloadYoutubeFile(url, formatId) {
     await waitForDownloadComplete(started, url, formatId, resolved);
   } catch (directErr) {
     await downloadYoutubeViaFetch(resolved, resolved.videoId);
+  } finally {
+    await clearYoutubeDownloadRules();
   }
 
   return {

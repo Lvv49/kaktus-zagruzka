@@ -4,7 +4,10 @@ const PRODUCTION_SITE = 'https://kaktus-zagruzka.onrender.com';
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ apiUrl: PRODUCTION_SITE });
+  clearYoutubeDownloadRules();
 });
+
+clearYoutubeDownloadRules();
 
 function isYoutubeMediaUrl(url) {
   return /googlevideo\.com|youtube\.com\/videoplayback/i.test(url || '');
@@ -39,20 +42,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.type === 'download') {
     (async () => {
-      if (isYoutubeMediaUrl(msg.url) && msg.videoId) {
-        await setupYoutubeDownloadRules(msg.videoId);
-        try {
-          await downloadViaDirect(msg);
-          return;
-        } catch {
-          await downloadYoutubeViaFetch(
-            { url: msg.url, filename: msg.filename },
-            msg.videoId,
-          );
-          return;
+      try {
+        if (isYoutubeMediaUrl(msg.url) && msg.videoId) {
+          await setupYoutubeDownloadRules(msg.videoId);
+          try {
+            await downloadViaDirect(msg);
+            return;
+          } catch {
+            await downloadYoutubeViaFetch(
+              { url: msg.url, filename: msg.filename },
+              msg.videoId,
+            );
+            return;
+          }
         }
+        await downloadViaDirect(msg);
+      } finally {
+        if (msg.videoId) await clearYoutubeDownloadRules();
       }
-      await downloadViaDirect(msg);
     })()
       .then(() => sendResponse({ ok: true }))
       .catch((err) => sendResponse({ ok: false, error: err.message || String(err) }));
