@@ -9,7 +9,7 @@ import zipfile
 import io
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yt_dlp
 from fastapi import FastAPI, HTTPException, Query
@@ -976,6 +976,35 @@ async def health():
     return {"ok": True}
 
 
+_YOUTUBE_REACH_CACHE: dict[str, Any] = {"ok": None, "ts": 0.0}
+_YOUTUBE_REACH_TTL = 300
+
+
+def check_youtube_reachable() -> bool:
+    now = time.time()
+    cached = _YOUTUBE_REACH_CACHE.get("ok")
+    if cached is not None and now - _YOUTUBE_REACH_CACHE["ts"] < _YOUTUBE_REACH_TTL:
+        return bool(cached)
+
+    import urllib.request
+
+    ok = False
+    try:
+        req = urllib.request.Request(
+            "https://i.ytimg.com/generate_204",
+            headers={"User-Agent": "Mozilla/5.0"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            ok = resp.status < 500
+    except Exception:
+        ok = False
+
+    _YOUTUBE_REACH_CACHE["ok"] = ok
+    _YOUTUBE_REACH_CACHE["ts"] = now
+    return ok
+
+
 @app.get("/api/ping")
 async def ping():
     return {
@@ -983,6 +1012,7 @@ async def ping():
         "mode": "render" if IS_RENDER else ("vps" if os.environ.get("PUBLIC_URL") else "local"),
         "is_render": IS_RENDER,
         "public_url": PUBLIC_URL,
+        "youtube_reachable": check_youtube_reachable(),
     }
 
 
@@ -1077,6 +1107,13 @@ async def analyze_video(req: AnalyzeRequest):
 
     if is_youtube_url(url):
         had_cookies = has_user_cookies(req.cookies)
+        if not check_youtube_reachable():
+            raise HTTPException(
+                503,
+                "YouTube с сервера недоступен (ограничение хостинга). "
+                "Установите расширение Chrome — кнопка «Расширение Chrome» сверху. "
+                "YouTube качается через ваш браузер, как у конкурентов.",
+            )
         try:
             return await asyncio.wait_for(
                 asyncio.to_thread(youtube_innertube.innertube_analyze, url, req.cookies),

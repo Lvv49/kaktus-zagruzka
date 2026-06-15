@@ -213,6 +213,20 @@ function renderFormats(formats) {
 const KAKTUS_EXT = 'kaktus-ext';
 
 let extensionAvailable = false;
+let serverYoutubeOk = true;
+
+const YT_EXT_MSG =
+  'YouTube с сервера недоступен на этом хостинге. Установите расширение Chrome (кнопка сверху) — скачивание идёт через ваш браузер, как у конкурентов.';
+
+async function loadServerConfig() {
+  try {
+    const res = await fetch('/api/ping');
+    const data = await res.json();
+    serverYoutubeOk = data.youtube_reachable !== false;
+  } catch {
+    serverYoutubeOk = true;
+  }
+}
 
 function showExtensionStatus() {
   const status = document.getElementById('cookies-status');
@@ -291,6 +305,9 @@ async function analyzeYoutube(url) {
     } catch {
       showProgress('Расширение не справилось, пробуем сервер...');
     }
+  }
+  if (!serverYoutubeOk) {
+    throw new Error(YT_EXT_MSG);
   }
   showProgress('Ищем форматы...');
   return analyzeCloud(url);
@@ -457,3 +474,4 @@ window.addEventListener('kaktus-cookies', (e) => {
 });
 
 detectExtension();
+loadServerConfig();
