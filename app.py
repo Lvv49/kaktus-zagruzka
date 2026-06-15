@@ -21,7 +21,10 @@ EXTENSION_DIR = BASE_DIR / "extension"
 DOWNLOADS_DIR = BASE_DIR / "downloads"
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 
-PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
+PUBLIC_URL = (
+    os.environ.get("PUBLIC_URL")
+    or os.environ.get("RENDER_EXTERNAL_URL", "")
+).rstrip("/")
 
 app = FastAPI(title="Кактус загрузка", version="1.0.0")
 
