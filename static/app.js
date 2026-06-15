@@ -17,7 +17,25 @@ function getCookies() {
   return localStorage.getItem('yt_cookies') || null;
 }
 
-window.addEventListener('kaktus-cookies', () => {});
+function updateCookiesStatus() {
+  const status = document.getElementById('cookies-status');
+  if (!status) return;
+  if (getCookies()) {
+    status.textContent = '✓ YouTube cookies подключены автоматически';
+    status.classList.remove('hidden');
+  } else {
+    status.classList.add('hidden');
+  }
+}
+
+window.addEventListener('kaktus-cookies', (e) => {
+  if (e.detail) {
+    localStorage.setItem('yt_cookies', e.detail);
+    const input = document.getElementById('cookies-input');
+    if (input) input.value = e.detail;
+    updateCookiesStatus();
+  }
+});
 
 function requestBody(url, extra = {}) {
   const body = { url, ...extra };
@@ -166,6 +184,10 @@ async function analyze() {
   resultSection.classList.add('hidden');
   analyzeBtn.querySelector('.btn-text').textContent = 'Ищем...';
 
+  if (isYoutube(url)) {
+    updateCookiesStatus();
+  }
+
   try {
     const res = await fetch('/api/analyze', {
       method: 'POST',
@@ -243,3 +265,25 @@ urlInput.addEventListener('paste', () => {
     if (urlInput.value.trim()) analyze();
   }, 100);
 });
+
+urlInput.addEventListener('input', () => {
+  if (isYoutube(urlInput.value)) updateCookiesStatus();
+});
+
+const extInstallBtn = document.getElementById('ext-install-btn');
+const extModal = document.getElementById('ext-modal');
+const extModalClose = document.getElementById('ext-modal-close');
+
+if (extInstallBtn && extModal) {
+  extInstallBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    extModal.classList.remove('hidden');
+  });
+
+  extModalClose.addEventListener('click', () => extModal.classList.add('hidden'));
+  extModal.querySelector('.ext-modal-backdrop').addEventListener('click', () => {
+    extModal.classList.add('hidden');
+  });
+}
+
+updateCookiesStatus();

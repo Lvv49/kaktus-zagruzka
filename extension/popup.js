@@ -56,7 +56,9 @@ async function loadAutoCookies() {
   const cookies = await syncYoutubeCookies();
   if (cookies) {
     cookiesInput.value = cookies;
+    document.getElementById('cookies-status').textContent = '✓ YouTube cookies подключены автоматически';
     document.getElementById('cookies-status').classList.remove('hidden');
+    cookiesBlock.classList.add('hidden');
   }
   return cookies;
 }
@@ -64,10 +66,10 @@ async function loadAutoCookies() {
 chrome.storage.local.get(['ytCookies'], async (data) => {
   if (data.ytCookies) {
     cookiesInput.value = data.ytCookies;
+    document.getElementById('cookies-status').textContent = '✓ YouTube cookies подключены автоматически';
     document.getElementById('cookies-status').classList.remove('hidden');
-  } else {
-    await loadAutoCookies();
   }
+  await loadAutoCookies();
 });
 
 function showError(msg) {
@@ -208,6 +210,10 @@ async function download() {
 
   hideError();
   setLoading(downloadBtn, true);
+
+  if (/youtube\.com|youtu\.be/i.test(currentUrl)) {
+    await loadAutoCookies();
+  }
 
   try {
     const res = await fetch(`${apiUrl}/api/download`, {
