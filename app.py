@@ -928,8 +928,7 @@ def ytdl_extract(
 
 
 YOUTUBE_COOKIE_HINT = (
-    "YouTube заблокировал скачивание. Установите расширение Chrome, "
-    "зайдите на youtube.com и войдите в аккаунт."
+    "YouTube временно недоступен. Попробуйте «Авто» или повторите через минуту."
 )
 
 YOUTUBE_COOKIE_STALE_HINT = (
@@ -1211,10 +1210,12 @@ def _download_to_file_with_fallbacks(
     if is_youtube_url(url):
         try:
             return _innertube_download_sync(url, format_id, tmp_dir)
-        except Exception:
+        except Exception as e:
             for f in tmp_dir.iterdir():
                 if f.is_file():
                     f.unlink()
+            if IS_RENDER or not has_user_cookies(cookies):
+                raise yt_dlp.utils.DownloadError(str(e)[:300])
 
     attempts = build_download_format_attempts(format_id, url, cookies)
     last_error: Optional[Exception] = None

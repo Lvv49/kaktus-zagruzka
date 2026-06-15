@@ -1,16 +1,33 @@
 import json
 import re
+import ssl
 import time
 import urllib.error
 import urllib.request
 from typing import Any, Optional
 
-INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+WEB_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 ANDROID_UA = "com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip"
 IOS_UA = "com.google.ios.youtube/20.10.3 (iPhone16,2; U; CPU iOS 18_0 like Mac OS X)"
+ANDROID_VR_UA = "com.google.android.apps.youtube.vr.oculus/1.49.10 (Linux; U; Android 12L)"
+FALLBACK_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHL6lhmF_0cBqnWkbc"
 
 PLAYER_CACHE: dict[str, dict[str, Any]] = {}
+API_KEY_CACHE: dict[str, Any] = {"key": None, "ts": 0}
 CACHE_TTL = 600
+API_KEY_TTL = 3600
+
+_SSL_CTX = ssl.create_default_context()
+try:
+    import certifi
+
+    _SSL_CTX.load_verify_locations(certifi.where())
+except Exception:
+    _SSL_CTX.check_hostname = False
+    _SSL_CTX.verify_mode = ssl.CERT_NONE
 
 
 def normalize_url(url: str) -> str:
@@ -44,6 +61,31 @@ def get_cached_player(video_id: str) -> Optional[dict]:
     if not entry or time.time() - entry["ts"] > CACHE_TTL:
         return None
     return entry["player"]
+
+
+def _urlopen(req: urllib.request.Request, timeout: int = 30):
+    return urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX)
+
+
+def get_innertube_api_key() -> str:
+    if API_KEY_CACHE["key"] and time.time() - API_KEY_CACHE["ts"] < API_KEY_TTL:
+        return API_KEY_CACHE["key"]
+
+    req = urllib.request.Request(
+        "https://www.youtube.com/",
+        headers={"User-Agent": WEB_UA, "Accept-Language": "en-US,en;q=0.9"},
+    )
+    try:
+        with _urlopen(req, timeout=20) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+        match = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
+        key = match.group(1) if match else FALLBACK_API_KEY
+    except Exception:
+        key = FALLBACK_API_KEY
+
+    API_KEY_CACHE["key"] = key
+    API_KEY_CACHE["ts"] = time.time()
+    return key
 
 
 def _resolve_format_url(fmt: dict) -> Optional[str]:
@@ -82,15 +124,75 @@ def _parse_formats(player: dict) -> tuple[list[dict], list[dict]]:
     return progressive, adaptive
 
 
+def _player_is_usable(player: dict) -> bool:
+    if not player or not player.get("streamingData"):
+        return False
+    progressive, adaptive = _parse_formats(player)
+    return bool(progressive or adaptive)
+
+
+def _parse_json_after_marker(html: str, marker: str) -> Optional[dict]:
+    idx = html.find(marker)
+    if idx < 0:
+        return None
+    start = html.find("{", idx)
+    if start < 0:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for i in range(start, len(html)):
+        ch = html[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(html[start : i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _is_skippable_error(reason: str) -> bool:
+    text = (reason or "").lower()
+    return any(
+        phrase in text
+        for phrase in (
+            "no longer supported",
+            "не поддерживается",
+            "application or device",
+            "приложении или на этом устройстве",
+            "page needs to be reloaded",
+        )
+    )
+
+
 def _innertube_request(video_id: str, client: dict) -> dict:
+    api_key = get_innertube_api_key()
     body = json.dumps({
         "context": {
             "client": {**client["context"], "hl": "en", "gl": "US"},
+            "user": {},
         },
         "videoId": video_id,
     }).encode()
     req = urllib.request.Request(
-        f"https://www.youtube.com/youtubei/v1/player?key={INNERTUBE_API_KEY}",
+        f"https://www.youtube.com/youtubei/v1/player?key={api_key}",
         data=body,
         headers={
             "Content-Type": "application/json",
@@ -100,8 +202,25 @@ def _innertube_request(video_id: str, client: dict) -> dict:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with _urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode())
+
+
+def _fetch_player_from_watch_page(video_id: str) -> dict:
+    req = urllib.request.Request(
+        f"https://www.youtube.com/watch?v={video_id}&bpctr=9999999999&has_verified=1",
+        headers={
+            "User-Agent": WEB_UA,
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
+    with _urlopen(req, timeout=30) as resp:
+        html = resp.read().decode("utf-8", errors="replace")
+
+    player = _parse_json_after_marker(html, "ytInitialPlayerResponse")
+    if player and _player_is_usable(player):
+        return player
+    raise ValueError("Не удалось прочитать страницу YouTube")
 
 
 def fetch_innertube_player(video_id: str) -> dict:
@@ -122,6 +241,16 @@ def fetch_innertube_player(video_id: str) -> dict:
         },
         {
             "context": {
+                "clientName": "ANDROID_VR",
+                "clientVersion": "1.49.10",
+                "deviceMake": "Oculus",
+                "deviceModel": "Quest 3",
+                "androidSdkVersion": 32,
+            },
+            "userAgent": ANDROID_VR_UA,
+        },
+        {
+            "context": {
                 "clientName": "IOS",
                 "clientVersion": "20.10.3",
                 "deviceModel": "iPhone16,2",
@@ -131,27 +260,28 @@ def fetch_innertube_player(video_id: str) -> dict:
         },
     ]
 
-    skip_phrases = (
-        "no longer supported",
-        "не поддерживается",
-        "application or device",
-    )
     last_error = "Не удалось получить видео с YouTube"
 
     for client in clients:
         try:
             data = _innertube_request(video_id, client)
-            progressive, adaptive = _parse_formats(data)
-            if progressive or adaptive:
+            if _player_is_usable(data):
                 _cache_player(video_id, data)
                 return data
             reason = (data.get("playabilityStatus") or {}).get("reason") or ""
-            if reason and not any(p in reason.lower() for p in skip_phrases):
+            if reason and not _is_skippable_error(reason):
                 last_error = reason
         except urllib.error.HTTPError as e:
             last_error = f"YouTube HTTP {e.code}"
         except Exception as e:
             last_error = str(e)
+
+    try:
+        player = _fetch_player_from_watch_page(video_id)
+        _cache_player(video_id, player)
+        return player
+    except Exception as e:
+        last_error = str(e) or last_error
 
     raise ValueError(last_error)
 
@@ -272,7 +402,7 @@ def pick_innertube_stream(video_id: str, format_id: str) -> dict:
     player = get_cached_player(video_id) or fetch_innertube_player(video_id)
     progressive, adaptive = _parse_formats(player)
     fmt = (format_id or "b").strip()
-    if fmt in ("18", "worst"):
+    if fmt in ("18", "worst", "bv*+ba/b"):
         fmt = "b"
 
     if fmt == "audio":
@@ -341,7 +471,7 @@ def innertube_download_to_path(video_id: str, format_id: str, dest_path: str) ->
             "Origin": "https://www.youtube.com",
         },
     )
-    with urllib.request.urlopen(req, timeout=600) as resp, open(dest_path, "wb") as out:
+    with _urlopen(req, timeout=600) as resp, open(dest_path, "wb") as out:
         while True:
             chunk = resp.read(1024 * 256)
             if not chunk:
