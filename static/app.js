@@ -221,7 +221,7 @@ async function download() {
   setLoading(downloadBtn, true);
 
   try {
-    const res = await fetch('/api/download', {
+    const prep = await fetch('/api/download/prepare', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody(currentUrl, {
@@ -229,23 +229,17 @@ async function download() {
       })),
     });
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
+    const data = await prep.json();
+    if (!prep.ok) {
       throw new Error(data.detail || 'Ошибка скачивания');
     }
 
-    const blob = await res.blob();
-    const disposition = res.headers.get('Content-Disposition') || '';
-    const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/i);
-    const filename = match ? decodeURIComponent(match[1]) : 'video.mp4';
-
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
+    a.href = data.url;
+    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(a.href);
   } catch (err) {
     showError(err.message);
   } finally {

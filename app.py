@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import uuid
 import zipfile
 import io
@@ -47,6 +48,9 @@ def init_cookies_from_env() -> None:
 
 
 init_cookies_from_env()
+
+DOWNLOAD_TOKENS: dict[str, dict] = {}
+TOKEN_TTL_SEC = 600
 
 app = FastAPI(title="Кактус загрузка", version="1.0.0")
 
@@ -342,13 +346,49 @@ def build_download_format_attempts(
     return list(dict.fromkeys(attempts))
 
 
+def prioritize_download_formats(attempts: list[str]) -> list[str]:
+    numeric = [a for a in attempts if re.fullmatch(r"\d+", a)]
+    quick = [a for a in attempts if a in ("b", "bv*+ba/b", "worst", "best")]
+    merge = [a for a in attempts if a not in numeric and a not in quick]
+    return list(dict.fromkeys(numeric + quick + merge))
+
+
 def build_ytdl_format_string(
     format_id: str,
     url: str,
     cookies: Optional[str] = None,
 ) -> str:
-    attempts = build_download_format_attempts(format_id, url, cookies)
+    attempts = prioritize_download_formats(
+        build_download_format_attempts(format_id, url, cookies)
+    )
     return "/".join(attempts)
+
+
+def store_download_token(url: str, format_id: str, cookies: Optional[str]) -> str:
+    cleanup_download_tokens()
+    token = str(uuid.uuid4())
+    DOWNLOAD_TOKENS[token] = {
+        "url": url.strip(),
+        "format_id": format_id,
+        "cookies": cookies,
+        "expires": time.time() + TOKEN_TTL_SEC,
+    }
+    return token
+
+
+def cleanup_download_tokens() -> None:
+    now = time.time()
+    expired = [key for key, job in DOWNLOAD_TOKENS.items() if job["expires"] < now]
+    for key in expired:
+        DOWNLOAD_TOKENS.pop(key, None)
+
+
+def pop_download_token(token: str) -> Optional[dict]:
+    cleanup_download_tokens()
+    job = DOWNLOAD_TOKENS.pop(token, None)
+    if not job or job["expires"] < time.time():
+        return None
+    return job
 
 
 def is_format_unavailable_error(err: Exception) -> bool:
@@ -797,7 +837,7 @@ async def analyze_video(req: AnalyzeRequest):
 
     info = None
     try:
-        use_fast = not bool(req.cookies and req.cookies.strip())
+        use_fast = True
         info = ytdl_extract(url, download=False, user_cookies=req.cookies, fast=use_fast)
     except Exception:
         if is_youtube_url(url):
@@ -841,6 +881,23 @@ async def analyze_video(req: AnalyzeRequest):
     }
 
 
+@app.post("/api/download/prepare")
+async def prepare_download(req: DownloadRequest):
+    url = req.url.strip()
+    if not url or not req.format_id:
+        raise HTTPException(400, "Укажите ссылку и формат")
+    token = store_download_token(url, req.format_id, req.cookies)
+    return {"token": token, "url": f"/api/download/token/{token}"}
+
+
+@app.get("/api/download/token/{token}")
+async def download_by_token(token: str):
+    job = pop_download_token(token)
+    if not job:
+        raise HTTPException(404, "Ссылка устарела. Нажмите «Скачать» снова.")
+    return await _do_download(job["url"], job["format_id"], job.get("cookies"))
+
+
 @app.post("/api/download")
 async def download_video_post(req: DownloadRequest):
     return await _do_download(req.url, req.format_id, req.cookies)
@@ -864,6 +921,7 @@ async def _do_download_once(
         "format": format_id,
         "outtmpl": str(tmp_dir / "%(title)s.%(ext)s"),
         "merge_output_format": "mp4",
+        "concurrent_fragment_downloads": 4,
     }
 
     info = ytdl_extract(url, extra=extra, download=True, user_cookies=cookies)
