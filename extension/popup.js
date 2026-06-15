@@ -1,4 +1,5 @@
-const DEFAULT_API = 'http://127.0.0.1:8081';
+const PRODUCTION_SITE = 'https://kaktus-zagruzka.onrender.com';
+const DEFAULT_API = PRODUCTION_SITE;
 
 const urlInput = document.getElementById('url-input');
 const analyzeBtn = document.getElementById('analyze-btn');
@@ -25,14 +26,21 @@ async function getApiUrl() {
 }
 
 async function detectApiUrl() {
+  const siteLink = document.querySelector('.footer a');
+  if (siteLink) siteLink.href = PRODUCTION_SITE;
+
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.url) {
     try {
       const u = new URL(tab.url);
-      if (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname.endsWith('.onrender.com')) {
+      if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') {
         const base = `${u.protocol}//${u.host}`;
         chrome.storage.local.set({ apiUrl: base });
-        document.querySelector('.footer a').href = base;
+        return base;
+      }
+      if (u.hostname.endsWith('.onrender.com')) {
+        const base = `${u.protocol}//${u.host}`;
+        chrome.storage.local.set({ apiUrl: base });
         return base;
       }
     } catch {}

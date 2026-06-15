@@ -28,6 +28,7 @@ COOKIES_FILE = COOKIES_DIR / "youtube.txt"
 PUBLIC_URL = (
     os.environ.get("PUBLIC_URL")
     or os.environ.get("RENDER_EXTERNAL_URL", "")
+    or "https://kaktus-zagruzka.onrender.com"
 ).rstrip("/")
 
 IS_RENDER = bool(os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL"))
@@ -184,7 +185,7 @@ def youtube_quality_presets() -> list[dict]:
         ("bestvideo[height<=1080]+bestaudio/best[height<=1080]", "MP4 · 1080p", 1080, False),
         ("bestvideo[height<=720]+bestaudio/best[height<=720]", "MP4 · 720p", 720, False),
         ("bestvideo[height<=480]+bestaudio/best[height<=480]", "MP4 · 480p", 480, False),
-        ("bestvideo[height<=360]+bestaudio/best[height<=360]", "MP4 · 360p", 360, False),
+        ("18", "MP4 · 360p (стабильно)", 360, False),
         ("bestvideo[height<=240]+bestaudio/best[height<=240]", "MP4 · 240p", 240, False),
         ("bestaudio", "M4A · только аудио", 0, False),
         ("worst", "MP4 · минимальный размер", 1, False),
@@ -384,12 +385,24 @@ def ytdl_extract(
         base_extra.setdefault("ignore_no_formats_error", True)
     base_extra.setdefault("extract_flat", False)
 
-    client_sets = [
-        None,
-        ["ios", "android"],
-        ["mweb", "web_creator"],
-        ["tv_embedded", "web"],
-    ]
+    client_sets = (
+        [
+            ["ios"],
+            ["android"],
+            ["ios", "android"],
+            ["mweb"],
+            None,
+            ["mweb", "web_creator"],
+            ["tv_embedded", "web"],
+        ]
+        if download
+        else [
+            None,
+            ["ios", "android"],
+            ["mweb", "web_creator"],
+            ["tv_embedded", "web"],
+        ]
+    )
 
     with temp_cookie_file(user_cookies) as user_cookie_path:
         attempts: list[tuple[Optional[str], Optional[str], bool, Optional[list[str]]]] = []
@@ -439,8 +452,23 @@ def ytdl_extract(
 
 
 YOUTUBE_COOKIE_HINT = (
-    "YouTube заблокировал запрос. Проверьте ссылку или попробуйте позже."
+    "YouTube заблокировал скачивание. Попробуйте формат 360p или откройте сайт "
+    "с установленным расширением Chrome (cookies подтянутся автоматически)."
 )
+
+
+def is_bot_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(word in msg for word in ("bot", "sign in", "cookies"))
+
+
+def friendly_ytdl_error(err: Exception) -> str:
+    if is_bot_error(err):
+        return YOUTUBE_COOKIE_HINT
+    msg = str(err)
+    if msg.startswith("ERROR:"):
+        msg = msg.split(":", 1)[1].strip()
+    return msg[:300]
 
 
 def is_useful_format(fmt: dict) -> bool:
@@ -498,10 +526,7 @@ async def analyze_video(req: AnalyzeRequest):
     try:
         info = ytdl_extract(url, download=False, user_cookies=req.cookies)
     except yt_dlp.utils.DownloadError as e:
-        msg = str(e)
-        if "bot" in msg.lower() or "sign in" in msg.lower():
-            msg = YOUTUBE_COOKIE_HINT
-        raise HTTPException(400, f"Не удалось получить видео: {msg}")
+        raise HTTPException(400, f"Не удалось получить видео: {friendly_ytdl_error(e)}")
     except Exception as e:
         raise HTTPException(500, f"Ошибка сервера: {str(e)}")
 
@@ -551,6 +576,56 @@ async def download_video_get(
     return await _do_download(url, format_id, None)
 
 
+def build_download_format_attempts(format_id: str, url: str) -> list[str]:
+    attempts = [format_id]
+    if not is_youtube_url(url):
+        return attempts
+
+    simple = ["18", "bv*+ba/b", "b", "best[height<=360]/best", "worst"]
+    for fmt in simple:
+        if fmt not in attempts:
+            attempts.append(fmt)
+    return attempts
+
+
+async def _do_download_once(
+    url: str,
+    format_id: str,
+    cookies: Optional[str],
+    tmp_dir: Path,
+) -> FileResponse:
+    extra = {
+        "format": format_id,
+        "outtmpl": str(tmp_dir / "%(title)s.%(ext)s"),
+        "merge_output_format": "mp4",
+    }
+
+    info = ytdl_extract(url, extra=extra, download=True, user_cookies=cookies)
+
+    with yt_dlp.YoutubeDL(build_ytdl_opts(extra, use_cookies=False)) as ydl:
+        filename = ydl.prepare_filename(info)
+
+    if not os.path.exists(filename):
+        for f in tmp_dir.iterdir():
+            if f.is_file():
+                filename = str(f)
+                break
+
+    if not os.path.exists(filename):
+        raise HTTPException(500, "Файл не был создан")
+
+    title = sanitize_filename(info.get("title", "video"))
+    ext = Path(filename).suffix or ".mp4"
+    safe_name = f"{title}{ext}"
+
+    return FileResponse(
+        filename,
+        media_type="application/octet-stream",
+        filename=safe_name,
+        background=_cleanup(tmp_dir),
+    )
+
+
 async def _do_download(url: str, format_id: str, cookies: Optional[str]):
     url = url.strip()
     if not url or not format_id:
@@ -560,40 +635,25 @@ async def _do_download(url: str, format_id: str, cookies: Optional[str]):
     tmp_dir = DOWNLOADS_DIR / job_id
     tmp_dir.mkdir(parents=True)
 
-    extra = {
-        "format": format_id,
-        "outtmpl": str(tmp_dir / "%(title)s.%(ext)s"),
-        "merge_output_format": "mp4",
-    }
+    last_error: Optional[Exception] = None
 
     try:
-        info = ytdl_extract(url, extra=extra, download=True, user_cookies=cookies)
+        for fmt in build_download_format_attempts(format_id, url):
+            try:
+                return await _do_download_once(url, fmt, cookies, tmp_dir)
+            except yt_dlp.utils.DownloadError as e:
+                last_error = e
+                if is_bot_error(e):
+                    continue
+                raise HTTPException(400, f"Ошибка скачивания: {friendly_ytdl_error(e)}")
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(500, f"Ошибка: {str(e)}")
 
-        with yt_dlp.YoutubeDL(build_ytdl_opts(extra, use_cookies=False)) as ydl:
-            filename = ydl.prepare_filename(info)
-
-        if not os.path.exists(filename):
-            for f in tmp_dir.iterdir():
-                if f.is_file():
-                    filename = str(f)
-                    break
-
-        if not os.path.exists(filename):
-            raise HTTPException(500, "Файл не был создан")
-
-        title = sanitize_filename(info.get("title", "video"))
-        ext = Path(filename).suffix or ".mp4"
-        safe_name = f"{title}{ext}"
-
-        return FileResponse(
-            filename,
-            media_type="application/octet-stream",
-            filename=safe_name,
-            background=_cleanup(tmp_dir),
-        )
-    except yt_dlp.utils.DownloadError as e:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise HTTPException(400, f"Ошибка скачивания: {str(e)}")
+        if last_error:
+            raise HTTPException(400, f"Ошибка скачивания: {friendly_ytdl_error(last_error)}")
+        raise HTTPException(400, "Не удалось скачать видео")
     except HTTPException:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise

@@ -9,7 +9,24 @@ let currentUrl = '';
 let selectedFormatId = null;
 let videoData = null;
 
-localStorage.removeItem('yt_cookies');
+function isYoutube(url) {
+  return /youtube\.com|youtu\.be/i.test(url);
+}
+
+function getCookies() {
+  return localStorage.getItem('yt_cookies') || null;
+}
+
+window.addEventListener('kaktus-cookies', () => {});
+
+function requestBody(url, extra = {}) {
+  const body = { url, ...extra };
+  if (isYoutube(url)) {
+    const cookies = getCookies();
+    if (cookies) body.cookies = cookies;
+  }
+  return body;
+}
 
 function showError(msg) {
   errorBox.textContent = msg;
@@ -152,7 +169,7 @@ async function analyze() {
     const res = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(requestBody(url)),
     });
 
     const data = await res.json();
@@ -183,10 +200,9 @@ async function download() {
     const res = await fetch('/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url: currentUrl,
+      body: JSON.stringify(requestBody(currentUrl, {
         format_id: selectedFormatId,
-      }),
+      })),
     });
 
     if (!res.ok) {

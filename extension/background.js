@@ -1,4 +1,5 @@
-const DEFAULT_API = 'http://127.0.0.1:8081';
+const PRODUCTION_SITE = 'https://kaktus-zagruzka.onrender.com';
+const DEFAULT_API = PRODUCTION_SITE;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(['apiUrl'], (data) => {
