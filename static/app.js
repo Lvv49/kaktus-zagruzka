@@ -149,6 +149,9 @@ function defaultFormatIndex(formats) {
 }
 
 function renderFormats(formats) {
+  if (!Array.isArray(formats) || !formats.length) {
+    throw new Error('Форматы не найдены. Попробуйте другую ссылку или обновите страницу.');
+  }
   formatsList.innerHTML = '';
   selectedFormatId = null;
   downloadBtn.disabled = true;
@@ -216,7 +219,32 @@ let extensionAvailable = false;
 let serverYoutubeOk = true;
 
 const YT_EXT_MSG =
-  'YouTube с сервера недоступен на этом хостинге. Установите расширение Chrome (кнопка сверху) — скачивание идёт через ваш браузер, как у конкурентов.';
+  'YouTube с сервера недоступен. Попробуйте снова — сайт ищет форматы через ваш браузер. Если не помогло, установите расширение Chrome (кнопка сверху).';
+
+function normalizeAnalyzeResult(raw) {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Пустой ответ от сервиса');
+  }
+  if (raw.ok === false) {
+    throw new Error(raw.error || raw.detail || 'Не удалось получить видео');
+  }
+  const formats = Array.isArray(raw.formats) ? raw.formats : null;
+  if (!formats || !formats.length) {
+    throw new Error(raw.error || raw.detail || 'Форматы не найдены');
+  }
+  return {
+    title: raw.title || 'Без названия',
+    thumbnail: raw.thumbnail,
+    video_id: raw.video_id,
+    duration: raw.duration || '—',
+    uploader: raw.uploader || '—',
+    platform: raw.platform || 'YouTube',
+    formats,
+    formats_estimated: !!raw.formats_estimated,
+    via_browser: !!raw.via_browser,
+    via_extension: !!raw.via_extension,
+  };
+}
 
 async function loadServerConfig() {
   try {
@@ -297,20 +325,41 @@ async function pingExtension() {
   }
 }
 
+async function analyzeYoutubeBrowser(url) {
+  if (typeof YT_BROWSER === 'undefined') {
+    throw new Error('Модуль браузера не загружен');
+  }
+  showProgress('Ищем форматы через ваш браузер...');
+  const data = await YT_BROWSER.analyze(url);
+  return normalizeAnalyzeResult(data);
+}
+
 async function analyzeYoutube(url) {
   if (await pingExtension()) {
     showProgress('Ищем форматы через расширение...');
     try {
-      return await extCall('youtubeAnalyze', { url }, 45000);
+      const data = normalizeAnalyzeResult(await extCall('youtubeAnalyze', { url }, 45000));
+      return data;
     } catch {
-      showProgress('Расширение не справилось, пробуем сервер...');
+      showProgress('Расширение не справилось, пробуем браузер...');
     }
   }
-  if (!serverYoutubeOk) {
-    throw new Error(YT_EXT_MSG);
+
+  try {
+    return await analyzeYoutubeBrowser(url);
+  } catch (browserErr) {
+    if (serverYoutubeOk) {
+      showProgress('Пробуем сервер...');
+      return normalizeAnalyzeResult(await analyzeCloud(url));
+    }
+    const msg = browserErr.message || '';
+    if (/fetch|network|cors|failed/i.test(msg)) {
+      throw new Error(
+        'YouTube недоступен напрямую. Установите расширение Chrome (кнопка «Расширение Chrome» сверху) и обновите страницу.',
+      );
+    }
+    throw browserErr;
   }
-  showProgress('Ищем форматы...');
-  return analyzeCloud(url);
 }
 
 async function downloadYoutubeViaExtension() {
@@ -358,7 +407,9 @@ async function analyze() {
   showProgress('Ищем форматы...');
 
   try {
-    const data = isYoutube(url) ? await analyzeYoutube(url) : await analyzeCloud(url);
+    const data = isYoutube(url)
+      ? await analyzeYoutube(url)
+      : normalizeAnalyzeResult(await analyzeCloud(url));
     hideError();
     currentUrl = url;
     videoData = data;
@@ -421,6 +472,13 @@ async function downloadCloud() {
   showProgress('Готово! Файл сохраняется в папку загрузок.');
 }
 
+async function downloadYoutubeBrowser() {
+  showProgress('Скачиваем через браузер...');
+  const data = await YT_BROWSER.download(currentUrl, selectedFormatId);
+  const note = data.note ? ` (${data.note})` : '';
+  showProgress(`Готово!${note} Файл сохраняется в папку загрузок.`);
+}
+
 async function download() {
   if (!currentUrl || !selectedFormatId) return;
 
@@ -430,6 +488,8 @@ async function download() {
   try {
     if (isYoutube(currentUrl) && await pingExtension()) {
       await downloadYoutubeViaExtension();
+    } else if (isYoutube(currentUrl) && videoData?.via_browser && typeof YT_BROWSER !== 'undefined') {
+      await downloadYoutubeBrowser();
     } else if (isYoutube(currentUrl)) {
       await downloadYoutubeDirect();
     } else {
