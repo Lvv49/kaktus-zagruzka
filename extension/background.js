@@ -1,15 +1,31 @@
+importScripts('youtube-client.js');
+
 const PRODUCTION_SITE = 'https://kaktus-zagruzka.onrender.com';
-const DEFAULT_API = PRODUCTION_SITE;
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get(['apiUrl'], (data) => {
-    if (!data.apiUrl) {
-      chrome.storage.local.set({ apiUrl: DEFAULT_API });
-    }
-  });
+  chrome.storage.local.set({ apiUrl: PRODUCTION_SITE });
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'ping') {
+    sendResponse({ ok: true, pong: true });
+    return false;
+  }
+
+  if (msg.type === 'youtubeAnalyze') {
+    analyzeYoutube(msg.url)
+      .then((data) => sendResponse(data))
+      .catch((err) => sendResponse({ ok: false, error: err.message || String(err) }));
+    return true;
+  }
+
+  if (msg.type === 'youtubeDownload') {
+    resolveYoutubeDownload(msg.url, msg.formatId)
+      .then((data) => sendResponse(data))
+      .catch((err) => sendResponse({ ok: false, error: err.message || String(err) }));
+    return true;
+  }
+
   if (msg.type === 'download') {
     chrome.downloads.download({
       url: msg.url,
@@ -24,4 +40,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     });
     return true;
   }
+
+  return false;
 });

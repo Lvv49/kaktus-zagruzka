@@ -8,6 +8,9 @@ const formatsList = document.getElementById('formats-list');
 let currentUrl = '';
 let selectedFormatId = null;
 let videoData = null;
+let hasExtension = localStorage.getItem('kaktus_extension') === '1';
+
+const KAKTUS_EXT = 'kaktus-ext';
 
 function isYoutube(url) {
   return /youtube\.com|youtu\.be/i.test(url);
@@ -17,16 +20,39 @@ function getCookies() {
   return localStorage.getItem('yt_cookies') || null;
 }
 
+function updateExtensionBanners() {
+  const need = document.getElementById('ext-banner');
+  const active = document.getElementById('ext-active-banner');
+  if (!need || !active) return;
+  if (hasExtension) {
+    need.classList.add('hidden');
+    active.classList.remove('hidden');
+  } else {
+    need.classList.remove('hidden');
+    active.classList.add('hidden');
+  }
+}
+
 function updateCookiesStatus() {
   const status = document.getElementById('cookies-status');
   if (!status) return;
   if (getCookies()) {
-    status.textContent = '✓ YouTube cookies подключены автоматически';
+    status.textContent = '✓ Расширение подключено · cookies с вашего браузера';
+    status.classList.remove('hidden');
+  } else if (hasExtension) {
+    status.textContent = 'Расширение установлено. Зайдите на youtube.com и войдите в аккаунт.';
     status.classList.remove('hidden');
   } else {
     status.classList.add('hidden');
   }
 }
+
+window.addEventListener('kaktus-extension-ready', () => {
+  hasExtension = true;
+  localStorage.setItem('kaktus_extension', '1');
+  updateExtensionBanners();
+  updateCookiesStatus();
+});
 
 window.addEventListener('kaktus-cookies', (e) => {
   if (e.detail) {
@@ -36,6 +62,53 @@ window.addEventListener('kaktus-cookies', (e) => {
     updateCookiesStatus();
   }
 });
+
+function callExtension(action, payload = {}) {
+  return new Promise((resolve, reject) => {
+    const requestId = Math.random().toString(36).slice(2);
+    const timer = setTimeout(() => {
+      window.removeEventListener('message', handler);
+      reject(new Error('Расширение не отвечает. Переустановите его и обновите страницу.'));
+    }, 90000);
+
+    function handler(event) {
+      if (event.data?.channel !== KAKTUS_EXT || event.data.requestId !== requestId) return;
+      clearTimeout(timer);
+      window.removeEventListener('message', handler);
+      if (event.data.pong) {
+        resolve({ ok: true });
+        return;
+      }
+      if (event.data.ok === false) {
+        reject(new Error(event.data.error || 'Ошибка расширения'));
+        return;
+      }
+      resolve(event.data);
+    }
+
+    window.addEventListener('message', handler);
+    window.postMessage({ channel: KAKTUS_EXT, requestId, action, payload }, '*');
+  });
+}
+
+async function detectExtension() {
+  if (localStorage.getItem('kaktus_extension') === '1') {
+    hasExtension = true;
+    updateExtensionBanners();
+    return true;
+  }
+  try {
+    await callExtension('ping');
+    hasExtension = true;
+    localStorage.setItem('kaktus_extension', '1');
+    updateExtensionBanners();
+    return true;
+  } catch {
+    hasExtension = false;
+    updateExtensionBanners();
+    return false;
+  }
+}
 
 function requestBody(url, extra = {}) {
   const body = { url, ...extra };
@@ -124,34 +197,6 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchPreparedFile(downloadUrl, filename, btnText) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (btnText) {
-      btnText.textContent = attempt ? `Скачиваем... повтор ${attempt + 1}` : 'Скачиваем файл...';
-    }
-    try {
-      const res = await fetch(downloadUrl);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || `Ошибка ${res.status}`);
-      }
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-      return;
-    } catch (e) {
-      if (attempt === 2) throw e;
-      await sleep(2000);
-    }
-  }
-}
-
 async function pollDownloadReady(token, onProgress) {
   for (let i = 0; i < 180; i++) {
     const res = await fetch(`/api/download/status/${token}`);
@@ -201,7 +246,7 @@ function renderFormats(formats) {
     countEl.textContent = `Найдено форматов: ${formats.length}`;
   }
 
-  let defaultIndex = defaultFormatIndex(formats);
+  const defaultIndex = defaultFormatIndex(formats);
 
   formats.forEach((fmt, i) => {
     const item = document.createElement('label');
@@ -231,7 +276,7 @@ function renderFormats(formats) {
     item.append(radio, label, size);
 
     radio.addEventListener('change', () => {
-      document.querySelectorAll('.format-item').forEach(el => el.classList.remove('selected'));
+      document.querySelectorAll('.format-item').forEach((el) => el.classList.remove('selected'));
       item.classList.add('selected');
       selectedFormatId = fmt.format_id;
       downloadBtn.disabled = false;
@@ -253,10 +298,38 @@ function renderFormats(formats) {
   });
 }
 
+async function analyzeYoutubeViaExtension(url) {
+  const data = await callExtension('youtubeAnalyze', { url });
+  if (!data.ok) {
+    throw new Error(data.error || 'Не удалось получить видео');
+  }
+  return data;
+}
+
+async function analyzeCloud(url) {
+  const res = await fetch('/api/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody(url)),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || 'Не удалось обработать ссылку');
+  }
+  return data;
+}
+
 async function analyze() {
   const url = urlInput.value.trim();
   if (!url) {
     showError('Вставьте ссылку на видео');
+    return;
+  }
+
+  await detectExtension();
+
+  if (isYoutube(url) && !hasExtension) {
+    showError('Для YouTube установите расширение Chrome (кнопка справа вверху), зайдите на youtube.com и войдите в аккаунт.');
     return;
   }
 
@@ -270,29 +343,14 @@ async function analyze() {
   }
 
   try {
-    const res = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody(url)),
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data.detail || 'Не удалось обработать ссылку');
-    }
+    const data = isYoutube(url)
+      ? await analyzeYoutubeViaExtension(url)
+      : await analyzeCloud(url);
 
     currentUrl = url;
     videoData = data;
     renderVideoInfo(data);
     renderFormats(data.formats);
-
-    if (data.formats_estimated && !getCookies()) {
-      showError('Форматы примерные. Для YouTube установите расширение и войдите на youtube.com.');
-    } else if (data.formats_estimated) {
-      showError('Форматы примерные — обновите страницу youtube.com (F5) и попробуйте снова.');
-    }
-
     resultSection.classList.remove('hidden');
   } catch (err) {
     showError(err.message);
@@ -302,40 +360,70 @@ async function analyze() {
   }
 }
 
+async function downloadYoutubeViaExtension() {
+  showProgress('Скачиваем через расширение с вашего ПК...');
+  const data = await callExtension('youtubeDownload', {
+    url: currentUrl,
+    formatId: selectedFormatId,
+  });
+  if (!data.ok) {
+    throw new Error(data.error || 'Ошибка скачивания');
+  }
+  if (data.note) {
+    showProgress(`Готово! (${data.note}) Файл в папке «Загрузки» Chrome.`);
+  } else {
+    showProgress('Готово! Файл в папке «Загрузки» Chrome.');
+  }
+}
+
+async function downloadCloud() {
+  showProgress('Подключаемся к серверу...');
+
+  const prep = await fetch('/api/download/prepare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody(currentUrl, {
+      format_id: selectedFormatId,
+    })),
+  });
+
+  const data = await prep.json();
+  if (!prep.ok) {
+    throw new Error(data.detail || 'Ошибка скачивания');
+  }
+
+  const ready = await pollDownloadReady(data.token, showProgress);
+  showProgress('Скачиваем файл...');
+  startBrowserDownload(data.url, ready.filename || 'video.mp4');
+  showProgress('Готово! Файл сохраняется в папку загрузок.');
+}
+
 async function download() {
   if (!currentUrl || !selectedFormatId) return;
+
+  await detectExtension();
 
   hideError();
   setLoading(downloadBtn, true);
 
-  if (isYoutube(currentUrl) && !getCookies()) {
-    showError('Для YouTube установите расширение Chrome, зайдите на youtube.com и войдите в аккаунт.');
-    setLoading(downloadBtn, false);
+  if (isYoutube(currentUrl)) {
+    if (!hasExtension) {
+      showError('Для YouTube нужно расширение Chrome. Скачайте его кнопкой «Расширение Chrome».');
+      setLoading(downloadBtn, false);
+      return;
+    }
+    try {
+      await downloadYoutubeViaExtension();
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setLoading(downloadBtn, false);
+    }
     return;
   }
 
   try {
-    showProgress('Подключаемся к серверу...');
-
-    const prep = await fetch('/api/download/prepare', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody(currentUrl, {
-        format_id: selectedFormatId,
-      })),
-    });
-
-    const data = await prep.json();
-    if (!prep.ok) {
-      throw new Error(data.detail || 'Ошибка скачивания');
-    }
-
-    const ready = await pollDownloadReady(data.token, showProgress);
-
-    showProgress('Скачиваем файл...');
-    startBrowserDownload(data.url, ready.filename || 'video.mp4');
-
-    showProgress('Готово! Файл сохраняется в папку загрузок.');
+    await downloadCloud();
   } catch (err) {
     showError(err.message);
   } finally {
@@ -370,10 +458,20 @@ if (extInstallBtn && extModal) {
     extModal.classList.remove('hidden');
   });
 
+  const extBannerLink = document.getElementById('ext-banner-link');
+  if (extBannerLink) {
+    extBannerLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      extModal.classList.remove('hidden');
+    });
+  }
+
   extModalClose.addEventListener('click', () => extModal.classList.add('hidden'));
   extModal.querySelector('.ext-modal-backdrop').addEventListener('click', () => {
     extModal.classList.add('hidden');
   });
 }
 
+detectExtension();
 updateCookiesStatus();
+updateExtensionBanners();

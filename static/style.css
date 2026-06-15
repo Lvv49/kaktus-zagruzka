@@ -281,6 +281,33 @@ input[type="url"]:focus {
   color: #86efac;
 }
 
+.local-banner {
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+  color: #fde68a;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.local-banner a {
+  color: var(--green-bright);
+  font-weight: 700;
+}
+
+.local-banner.local-active {
+  background: rgba(76, 175, 80, 0.12);
+  border-color: rgba(76, 175, 80, 0.35);
+  color: #86efac;
+}
+
+.ext-hint-strong {
+  margin-top: 0.75rem;
+  color: var(--green-bright);
+}
+
 .video-card {
   display: flex;
   gap: 1.25rem;

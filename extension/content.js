@@ -1,3 +1,8 @@
+const KAKTUS_EXT = 'kaktus-ext';
+
+localStorage.setItem('kaktus_extension', '1');
+window.dispatchEvent(new CustomEvent('kaktus-extension-ready'));
+
 async function applyCookiesToPage() {
   const cookies = await syncYoutubeCookies();
   if (!cookies) return;
@@ -12,17 +17,90 @@ async function applyCookiesToPage() {
 
   const status = document.getElementById('cookies-status');
   if (status) {
-    status.textContent = '✓ YouTube cookies подключены автоматически';
+    status.textContent = '✓ YouTube cookies подключены через расширение';
     status.classList.remove('hidden');
   }
-
-  const block = document.getElementById('cookies-block');
-  if (block) block.classList.add('hidden');
 
   window.dispatchEvent(new CustomEvent('kaktus-cookies', { detail: cookies }));
 }
 
 applyCookiesToPage();
+setInterval(applyCookiesToPage, 15000);
+
+window.addEventListener('message', (event) => {
+  if (event.source !== window || !event.data || event.data.channel !== KAKTUS_EXT) return;
+
+  const { requestId, action, payload } = event.data;
+
+  if (action === 'ping') {
+    window.postMessage({ channel: KAKTUS_EXT, requestId, pong: true }, '*');
+    return;
+  }
+
+  if (action === 'youtubeAnalyze') {
+    chrome.runtime.sendMessage({ type: 'youtubeAnalyze', url: payload.url }, (resp) => {
+      if (chrome.runtime.lastError) {
+        window.postMessage({
+          channel: KAKTUS_EXT,
+          requestId,
+          ok: false,
+          error: chrome.runtime.lastError.message,
+        }, '*');
+        return;
+      }
+      window.postMessage({ channel: KAKTUS_EXT, requestId, ...resp }, '*');
+    });
+    return;
+  }
+
+  if (action === 'youtubeDownload') {
+    chrome.runtime.sendMessage({
+      type: 'youtubeDownload',
+      url: payload.url,
+      formatId: payload.formatId,
+    }, (resp) => {
+      if (chrome.runtime.lastError) {
+        window.postMessage({
+          channel: KAKTUS_EXT,
+          requestId,
+          ok: false,
+          error: chrome.runtime.lastError.message,
+        }, '*');
+        return;
+      }
+      if (!resp?.ok) {
+        window.postMessage({
+          channel: KAKTUS_EXT,
+          requestId,
+          ok: false,
+          error: resp?.error || 'Ошибка скачивания',
+        }, '*');
+        return;
+      }
+      chrome.runtime.sendMessage({
+        type: 'download',
+        url: resp.url,
+        filename: resp.filename,
+      }, (dl) => {
+        window.postMessage({
+          channel: KAKTUS_EXT,
+          requestId,
+          ok: Boolean(dl?.ok),
+          error: dl?.error,
+          note: resp.note,
+        }, '*');
+      });
+    });
+    return;
+  }
+
+  window.postMessage({
+    channel: KAKTUS_EXT,
+    requestId,
+    ok: false,
+    error: 'Неизвестное действие',
+  }, '*');
+});
 
 const urlInput = document.getElementById('url-input');
 if (urlInput) {
@@ -30,5 +108,14 @@ if (urlInput) {
     if (/youtube\.com|youtu\.be/i.test(urlInput.value)) {
       applyCookiesToPage();
     }
+  });
+}
+
+const extBannerLink = document.getElementById('ext-banner-link');
+if (extBannerLink) {
+  extBannerLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    const modal = document.getElementById('ext-modal');
+    if (modal) modal.classList.remove('hidden');
   });
 }

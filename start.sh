@@ -7,14 +7,11 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
-pip install -q -r requirements.txt
+    pip install -q -r requirements.txt
 
-echo ""
-echo "🌵 Кактус загрузка запускается..."
-echo "   Откройте: http://localhost:8081"
-echo ""
-echo "   YouTube: войдите в аккаунт в Chrome или Safari."
-echo "   При ошибке «бот»: export YTDLP_COOKIES_BROWSER=safari"
+echo "🌵 Кактус загрузка"
+echo "   Сайт: http://localhost:8081"
+echo "   YouTube — через расширение Chrome (локальный сервер не обязателен)"
 echo ""
 
 lsof -ti :8081 | xargs kill -9 2>/dev/null

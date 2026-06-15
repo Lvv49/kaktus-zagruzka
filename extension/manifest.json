@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Кактус загрузка",
-  "version": "1.4.2",
-  "description": "Скачивай видео с YouTube, VK, TikTok, Pinterest и других соцсетей",
+  "version": "1.6.0",
+  "description": "Скачивай видео с YouTube через ваш браузер, остальное — через сайт",
   "action": {
     "default_popup": "popup.html",
     "default_title": "Кактус загрузка",
@@ -15,18 +15,15 @@
   },
   "permissions": ["activeTab", "cookies", "downloads", "storage"],
   "host_permissions": [
-    "http://127.0.0.1/*",
-    "http://localhost/*",
     "https://*.onrender.com/*",
     "https://*.youtube.com/*",
     "https://youtube.com/*",
-    "https://*.google.com/*"
+    "https://*.google.com/*",
+    "https://*.googlevideo.com/*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "http://127.0.0.1:8081/*",
-        "http://localhost:8081/*",
         "https://*.onrender.com/*",
         "https://kaktus-zagruzka.onrender.com/*"
       ],

@@ -970,6 +970,15 @@ def is_useful_format(fmt: dict) -> bool:
     return bool(fmt.get("format_id"))
 
 
+@app.get("/api/ping")
+async def ping():
+    return {
+        "ok": True,
+        "mode": "cloud" if IS_RENDER else "local",
+        "is_render": IS_RENDER,
+    }
+
+
 @app.get("/api/config")
 async def get_config():
     return {

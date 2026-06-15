@@ -30,7 +30,7 @@
       <button class="ext-modal-close" id="ext-modal-close">&times;</button>
       <img src="/static/logo.png" alt="" class="ext-modal-logo">
       <h2>Расширение для Chrome</h2>
-      <p class="ext-hint">Подтягивает ваши YouTube cookies автоматически — на сайте и в расширении.</p>
+      <p class="ext-hint">YouTube качается прямо с вашего ПК через расширение. VK, TikTok и др. — через сайт.</p>
 
       <a href="/api/extension/download" class="btn btn-download ext-download-btn" download>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -44,6 +44,10 @@
       <p class="ext-hint">
         Распакуй ZIP → <code>chrome://extensions</code> → Режим разработчика →
         Загрузить распакованное → папка <code>extension</code>
+      </p>
+      <p class="ext-hint ext-hint-strong">
+        Зайдите на youtube.com и войдите в аккаунт. Расширение само возьмёт cookies
+        и скачает видео с вашего компьютера — локальный сервер не нужен.
       </p>
     </div>
   </div>
@@ -59,6 +63,15 @@
   </header>
 
   <main class="container">
+    <div id="ext-banner" class="local-banner">
+      <strong>YouTube:</strong> установите расширение Chrome (кнопка справа вверху).
+      Скачивание идёт с вашего ПК через расширение, не из облака.
+      <a href="#" id="ext-banner-link">Установить</a>
+    </div>
+    <div id="ext-active-banner" class="local-banner local-active hidden">
+      <strong>✓ Расширение подключено</strong> — YouTube качается с вашего компьютера.
+    </div>
+
     <section class="card input-card">
       <label for="url-input" class="label">Вставьте ссылку на видео</label>
       <div class="input-row">
@@ -131,6 +144,6 @@
     <p>Кактус загрузка · Бесплатный сервис для скачивания видео</p>
   </footer>
 
-  <script src="/static/app.js?v=14"></script>
+  <script src="/static/app.js?v=16"></script>
 </body>
 </html>
