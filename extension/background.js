@@ -1,6 +1,6 @@
 importScripts('youtube-client.js');
 
-const PRODUCTION_SITE = 'https://kaktus-zagruzka.onrender.com';
+const PRODUCTION_SITE = 'https://kaktus-zagruzka.ru';
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ apiUrl: PRODUCTION_SITE });

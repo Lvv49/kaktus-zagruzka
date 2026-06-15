@@ -212,15 +212,20 @@ function renderFormats(formats) {
 
 const KAKTUS_EXT = 'kaktus-ext';
 
-let extensionAvailable = localStorage.getItem('kaktus_extension') === '1';
+let extensionAvailable = false;
 
-window.addEventListener('kaktus-extension-ready', () => {
-  extensionAvailable = true;
+function showExtensionStatus() {
   const status = document.getElementById('cookies-status');
   if (status) {
     status.textContent = '✓ Расширение подключено — YouTube с вашего ПК';
     status.classList.remove('hidden');
   }
+}
+
+window.addEventListener('kaktus-extension-ready', () => {
+  extensionAvailable = true;
+  localStorage.setItem('kaktus_extension', '1');
+  showExtensionStatus();
 });
 
 function extCall(action, payload = {}, timeoutMs = 60000) {
@@ -252,10 +257,12 @@ function extCall(action, payload = {}, timeoutMs = 60000) {
   });
 }
 
-async function pingExtension() {
-  if (!extensionAvailable) return false;
+async function detectExtension() {
   try {
-    await extCall('ping', {}, 2500);
+    await extCall('ping', {}, 2000);
+    extensionAvailable = true;
+    localStorage.setItem('kaktus_extension', '1');
+    showExtensionStatus();
     return true;
   } catch {
     extensionAvailable = false;
@@ -263,11 +270,27 @@ async function pingExtension() {
   }
 }
 
+async function pingExtension() {
+  if (!extensionAvailable) {
+    return detectExtension();
+  }
+  try {
+    await extCall('ping', {}, 2500);
+    return true;
+  } catch {
+    extensionAvailable = false;
+    return detectExtension();
+  }
+}
+
 async function analyzeYoutube(url) {
   if (await pingExtension()) {
     showProgress('Ищем форматы через расширение...');
-    const data = await extCall('youtubeAnalyze', { url }, 45000);
-    return data;
+    try {
+      return await extCall('youtubeAnalyze', { url }, 45000);
+    } catch {
+      showProgress('Расширение не справилось, пробуем сервер...');
+    }
   }
   showProgress('Ищем форматы...');
   return analyzeCloud(url);
@@ -326,9 +349,12 @@ async function analyze() {
     renderFormats(data.formats);
     resultSection.classList.remove('hidden');
   } catch (err) {
-    const msg = err.name === 'AbortError'
-      ? 'Сервер не отвечает. Подождите минуту и нажмите «Найти форматы» снова.'
-      : err.message;
+    let msg = err.message;
+    if (err.name === 'AbortError') {
+      msg = isYoutube(url)
+        ? 'Сервер не отвечает. Установите расширение Chrome (кнопка сверху) — YouTube через него работает с вашего ПК. Или подождите минуту и попробуйте снова.'
+        : 'Сервер не отвечает. Подождите минуту и нажмите «Найти форматы» снова.';
+    }
     showError(msg);
   } finally {
     setLoading(analyzeBtn, false);
@@ -429,3 +455,5 @@ window.addEventListener('kaktus-cookies', (e) => {
     if (input) input.value = e.detail;
   }
 });
+
+detectExtension();

@@ -1,4 +1,4 @@
-const PRODUCTION_SITE = 'https://kaktus-zagruzka.onrender.com';
+const PRODUCTION_SITE = 'https://kaktus-zagruzka.ru';
 const apiUrl = PRODUCTION_SITE;
 
 const urlInput = document.getElementById('url-input');

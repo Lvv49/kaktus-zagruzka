@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Кактус загрузка",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "Скачивай YouTube с вашего ПК через расширение, остальное — через сайт",
   "action": {
     "default_popup": "popup.html",
@@ -23,6 +23,8 @@
     "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
+    "https://kaktus-zagruzka.ru/*",
+    "https://www.kaktus-zagruzka.ru/*",
     "https://*.onrender.com/*",
     "https://*.youtube.com/*",
     "https://youtube.com/*",
@@ -32,6 +34,8 @@
   "content_scripts": [
     {
       "matches": [
+        "https://kaktus-zagruzka.ru/*",
+        "https://www.kaktus-zagruzka.ru/*",
         "https://*.onrender.com/*",
         "https://kaktus-zagruzka.onrender.com/*",
         "http://127.0.0.1:8081/*",

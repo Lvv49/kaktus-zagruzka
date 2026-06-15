@@ -15,21 +15,29 @@ echo "Домен: $URL"
 
 if [ -f "$ROOT/.env" ]; then
   if grep -q '^PUBLIC_URL=' "$ROOT/.env"; then
-    sed -i "s|^PUBLIC_URL=.*|PUBLIC_URL=$URL|" "$ROOT/.env"
+    sed_inplace "s|^PUBLIC_URL=.*|PUBLIC_URL=$URL|" "$ROOT/.env"
   else
     echo "PUBLIC_URL=$URL" >> "$ROOT/.env"
   fi
 else
   cp "$ROOT/.env.example" "$ROOT/.env"
-  sed -i "s|https://kaktus.example.com|$URL|" "$ROOT/.env"
+  sed_inplace "s|https://kaktus.example.com|$URL|" "$ROOT/.env"
 fi
+
+sed_inplace() {
+  if sed --version >/dev/null 2>&1; then
+    sed -i "$@"
+  else
+    sed -i '' "$@"
+  fi
+}
 
 replace_in_file() {
   local file="$1"
   local pattern="$2"
   local replacement="$3"
   if [ -f "$file" ]; then
-    sed -i "s|${pattern}|${replacement}|g" "$file"
+    sed_inplace "s|${pattern}|${replacement}|g" "$file"
   fi
 }
 
@@ -46,15 +54,16 @@ import json, sys
 path, domain = sys.argv[1], sys.argv[2]
 with open(path, encoding="utf-8") as f:
     data = json.load(f)
-site = f"https://{domain}/*"
+sites = [f"https://{domain}/*", f"https://www.{domain}/*"]
 for block in data.get("content_scripts", []):
     matches = block.setdefault("matches", [])
-    if site not in matches:
-        matches.insert(0, site)
-host = f"https://{domain}/*"
+    for site in reversed(sites):
+        if site not in matches:
+            matches.insert(0, site)
 perms = data.setdefault("host_permissions", [])
-if host not in perms:
-    perms.insert(0, host)
+for host in reversed(sites):
+    if host not in perms:
+        perms.insert(0, host)
 with open(path, "w", encoding="utf-8") as f:
     json.dump(data, f, ensure_ascii=False, indent=2)
     f.write("\n")
@@ -62,7 +71,7 @@ PY
 fi
 
 if [ -f "$ROOT/deploy/nginx-site.conf" ]; then
-  sed -i "s|server_name .*;|server_name ${DOMAIN};|" "$ROOT/deploy/nginx-site.conf"
+  sed_inplace "s|server_name .*;|server_name ${DOMAIN} www.${DOMAIN};|" "$ROOT/deploy/nginx-site.conf"
 fi
 
 echo ""

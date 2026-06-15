@@ -32,7 +32,7 @@ COOKIES_FILE = COOKIES_DIR / "youtube.txt"
 PUBLIC_URL = (
     os.environ.get("PUBLIC_URL")
     or os.environ.get("RENDER_EXTERNAL_URL", "")
-    or "https://kaktus-zagruzka.onrender.com"
+    or "https://kaktus-zagruzka.ru"
 ).rstrip("/")
 
 IS_RENDER = bool(os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL"))

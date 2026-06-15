@@ -21,7 +21,7 @@ API_KEY_CACHE: dict[str, Any] = {"key": None, "ts": 0}
 CACHE_TTL = 1800
 API_KEY_TTL = 3600
 IS_RENDER = bool(os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL"))
-HTTP_TIMEOUT = 12 if IS_RENDER else 25
+HTTP_TIMEOUT = 12 if IS_RENDER else 10
 
 _SSL_CTX = ssl.create_default_context()
 try:

@@ -8,6 +8,10 @@ cd "$ROOT"
 git pull origin main
 docker compose up -d --build
 
+if [ -f "$ROOT/deploy/fix-nginx-timeouts.sh" ]; then
+  bash "$ROOT/deploy/fix-nginx-timeouts.sh" 2>/dev/null || true
+fi
+
 echo ""
 echo "Деплой завершён. Проверка:"
 sleep 3
