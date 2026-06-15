@@ -30,7 +30,7 @@
       <button class="ext-modal-close" id="ext-modal-close">&times;</button>
       <img src="/static/logo.png" alt="" class="ext-modal-logo">
       <h2>Расширение для Chrome</h2>
-      <p class="ext-hint">YouTube качается прямо с вашего ПК через расширение. VK, TikTok и др. — через сайт.</p>
+      <p class="ext-hint">Опционально: расширение скачивает YouTube прямо с вашего ПК. На сайте YouTube тоже работает без расширения.</p>
 
       <a href="/api/extension/download" class="btn btn-download ext-download-btn" download>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -57,19 +57,18 @@
       <img src="/static/logo.png" alt="Кактус" class="logo">
       <div>
         <h1>Кактус загрузка</h1>
-        <p class="tagline">YouTube — через расширение с вашего ПК · остальное — через сайт</p>
+        <p class="tagline">YouTube, VK, TikTok и другие — прямо на сайте</p>
       </div>
     </div>
   </header>
 
   <main class="container">
-    <div id="ext-banner" class="local-banner">
-      <strong>YouTube:</strong> установите расширение Chrome (кнопка справа вверху).
-      Скачивание идёт с вашего ПК через расширение, не из облака.
-      <a href="#" id="ext-banner-link">Установить</a>
+    <div id="ext-banner" class="local-banner hidden">
+      <strong>YouTube:</strong> работает на сайте. Расширение Chrome — опционально, для скачивания с вашего ПК.
+      <a href="#" id="ext-banner-link">Подробнее</a>
     </div>
     <div id="ext-active-banner" class="local-banner local-active hidden">
-      <strong>✓ Расширение подключено</strong> — YouTube на сайте качается так же, как в расширении (с вашего ПК).
+      <strong>✓ Расширение подключено</strong> — можно скачивать YouTube и с вашего ПК.
     </div>
 
     <section class="card input-card">
@@ -97,7 +96,7 @@
         <span class="platform-badge">и другие</span>
       </div>
 
-      <p id="cookies-status" class="cookies-status hidden">✓ YouTube cookies подключены автоматически</p>
+      <p id="cookies-status" class="cookies-status hidden"></p>
       <input type="hidden" id="cookies-input">
     </section>
 
@@ -144,6 +143,6 @@
     <p>Кактус загрузка · Бесплатный сервис для скачивания видео</p>
   </footer>
 
-  <script src="/static/app.js?v=18"></script>
+  <script src="/static/app.js?v=19"></script>
 </body>
 </html>

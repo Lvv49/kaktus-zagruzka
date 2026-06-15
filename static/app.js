@@ -8,9 +8,6 @@ const formatsList = document.getElementById('formats-list');
 let currentUrl = '';
 let selectedFormatId = null;
 let videoData = null;
-let hasExtension = false;
-
-const KAKTUS_EXT = 'kaktus-ext';
 
 function normalizeYoutubeUrl(url) {
   return (url || '').trim().replace(/\\+$/g, '');
@@ -24,99 +21,11 @@ function getCookies() {
   return localStorage.getItem('yt_cookies') || null;
 }
 
-function updateExtensionBanners() {
-  const need = document.getElementById('ext-banner');
-  const active = document.getElementById('ext-active-banner');
-  if (!need || !active) return;
-  if (hasExtension) {
-    need.classList.add('hidden');
-    active.classList.remove('hidden');
-  } else {
-    need.classList.remove('hidden');
-    active.classList.add('hidden');
-  }
-}
-
-function updateCookiesStatus() {
-  const status = document.getElementById('cookies-status');
-  if (!status) return;
-  if (!hasExtension) {
-    status.classList.add('hidden');
-    return;
-  }
-  if (getCookies()) {
-    status.textContent = '✓ Расширение подключено · YouTube с вашего ПК';
-    status.classList.remove('hidden');
-  } else {
-    status.textContent = 'Расширение подключено. Зайдите на youtube.com и войдите в аккаунт.';
-    status.classList.remove('hidden');
-  }
-}
-
-window.addEventListener('kaktus-extension-ready', () => {
-  detectExtension();
-});
-
-window.addEventListener('kaktus-cookies', (e) => {
-  if (e.detail) {
-    localStorage.setItem('yt_cookies', e.detail);
-    const input = document.getElementById('cookies-input');
-    if (input) input.value = e.detail;
-    updateCookiesStatus();
-  }
-});
-
-function callExtension(action, payload = {}, timeoutMs = 90000) {
-  return new Promise((resolve, reject) => {
-    const requestId = Math.random().toString(36).slice(2);
-    const timer = setTimeout(() => {
-      window.removeEventListener('message', handler);
-      reject(new Error('Расширение не отвечает. Установите v1.7.2+ и обновите эту страницу (F5).'));
-    }, timeoutMs);
-
-    function handler(event) {
-      if (event.data?.channel !== KAKTUS_EXT || event.data.requestId !== requestId) return;
-      clearTimeout(timer);
-      window.removeEventListener('message', handler);
-
-      if (event.data.pong) {
-        resolve({ ok: true });
-        return;
-      }
-      if (event.data.ok === false) {
-        reject(new Error(event.data.error || 'Ошибка расширения'));
-        return;
-      }
-      resolve(event.data);
-    }
-
-    window.addEventListener('message', handler);
-    window.postMessage({ channel: KAKTUS_EXT, requestId, action, payload }, '*');
-  });
-}
-
-async function detectExtension() {
-  try {
-    await callExtension('ping', {}, 4000);
-    hasExtension = true;
-    localStorage.setItem('kaktus_extension', '1');
-    updateExtensionBanners();
-    updateCookiesStatus();
-    return true;
-  } catch {
-    hasExtension = false;
-    localStorage.removeItem('kaktus_extension');
-    updateExtensionBanners();
-    updateCookiesStatus();
-    return false;
-  }
-}
-
 function requestBody(url, extra = {}) {
   const body = { url, ...extra };
-  if (isYoutube(url)) {
-    const cookies = getCookies();
-    if (cookies) body.cookies = cookies;
+  const cookies = getCookies();
+  if (isYoutube(url) && cookies) {
+    body.cookies = cookies;
   }
   return body;
 }
@@ -298,14 +207,6 @@ function renderFormats(formats) {
   });
 }
 
-async function analyzeYoutubeViaExtension(url) {
-  const data = await callExtension('youtubeAnalyze', { url: normalizeYoutubeUrl(url) });
-  if (data.ok === false || !data.formats?.length) {
-    throw new Error(data.error || 'Не удалось получить форматы YouTube');
-  }
-  return data;
-}
-
 async function analyzeCloud(url) {
   const res = await fetch('/api/analyze', {
     method: 'POST',
@@ -319,14 +220,6 @@ async function analyzeCloud(url) {
   return data;
 }
 
-function requireExtensionForYoutube() {
-  if (!hasExtension) {
-    showError('Для YouTube установите расширение Chrome (кнопка справа вверху), обновите страницу (F5) и зайдите на youtube.com.');
-    return false;
-  }
-  return true;
-}
-
 async function analyze() {
   const url = normalizeYoutubeUrl(urlInput.value);
   urlInput.value = url;
@@ -335,26 +228,13 @@ async function analyze() {
     return;
   }
 
-  await detectExtension();
-
-  if (isYoutube(url) && !requireExtensionForYoutube()) {
-    return;
-  }
-
   hideError();
   setLoading(analyzeBtn, true);
   resultSection.classList.add('hidden');
   analyzeBtn.querySelector('.btn-text').textContent = 'Ищем...';
 
-  if (isYoutube(url)) {
-    updateCookiesStatus();
-  }
-
   try {
-    const data = isYoutube(url)
-      ? await analyzeYoutubeViaExtension(url)
-      : await analyzeCloud(url);
-
+    const data = await analyzeCloud(url);
     currentUrl = url;
     videoData = data;
     renderVideoInfo(data);
@@ -365,22 +245,6 @@ async function analyze() {
   } finally {
     setLoading(analyzeBtn, false);
     analyzeBtn.querySelector('.btn-text').textContent = 'Найти форматы';
-  }
-}
-
-async function downloadYoutubeViaExtension() {
-  showProgress('Получаем ссылку и скачиваем с вашего ПК...');
-  const data = await callExtension('youtubeDownload', {
-    url: currentUrl,
-    formatId: selectedFormatId,
-  });
-  if (data.ok === false) {
-    throw new Error(data.error || 'Ошибка скачивания');
-  }
-  if (data.note) {
-    showProgress(`Готово! (${data.note}) Файл в папке «Загрузки» Chrome.`);
-  } else {
-    showProgress('Готово! Файл в папке «Загрузки» Chrome.');
   }
 }
 
@@ -409,25 +273,8 @@ async function downloadCloud() {
 async function download() {
   if (!currentUrl || !selectedFormatId) return;
 
-  await detectExtension();
-
   hideError();
   setLoading(downloadBtn, true);
-
-  if (isYoutube(currentUrl)) {
-    if (!requireExtensionForYoutube()) {
-      setLoading(downloadBtn, false);
-      return;
-    }
-    try {
-      await downloadYoutubeViaExtension();
-    } catch (err) {
-      showError(err.message);
-    } finally {
-      setLoading(downloadBtn, false);
-    }
-    return;
-  }
 
   try {
     await downloadCloud();
@@ -451,13 +298,6 @@ urlInput.addEventListener('paste', () => {
   }, 100);
 });
 
-urlInput.addEventListener('input', () => {
-  if (isYoutube(urlInput.value)) {
-    detectExtension();
-    updateCookiesStatus();
-  }
-});
-
 const extInstallBtn = document.getElementById('ext-install-btn');
 const extModal = document.getElementById('ext-modal');
 const extModalClose = document.getElementById('ext-modal-close');
@@ -468,20 +308,16 @@ if (extInstallBtn && extModal) {
     extModal.classList.remove('hidden');
   });
 
-  const extBannerLink = document.getElementById('ext-banner-link');
-  if (extBannerLink) {
-    extBannerLink.addEventListener('click', (e) => {
-      e.preventDefault();
-      extModal.classList.remove('hidden');
-    });
-  }
-
   extModalClose.addEventListener('click', () => extModal.classList.add('hidden'));
   extModal.querySelector('.ext-modal-backdrop').addEventListener('click', () => {
     extModal.classList.add('hidden');
   });
 }
 
-detectExtension();
-setInterval(detectExtension, 12000);
-window.addEventListener('focus', detectExtension);
+window.addEventListener('kaktus-cookies', (e) => {
+  if (e.detail) {
+    localStorage.setItem('yt_cookies', e.detail);
+    const input = document.getElementById('cookies-input');
+    if (input) input.value = e.detail;
+  }
+});

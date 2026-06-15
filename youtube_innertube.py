@@ -1,0 +1,342 @@
+import json
+import re
+import time
+import urllib.error
+import urllib.request
+from typing import Any, Optional
+
+INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+ANDROID_UA = "com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip"
+IOS_UA = "com.google.ios.youtube/20.10.3 (iPhone16,2; U; CPU iOS 18_0 like Mac OS X)"
+
+PLAYER_CACHE: dict[str, dict[str, Any]] = {}
+CACHE_TTL = 600
+
+
+def extract_youtube_id(url: str) -> Optional[str]:
+    url = (url or "").strip().rstrip("\\")
+    patterns = [
+        r"(?:v=|/embed/|/v/|/shorts/|youtu\.be/)([\w-]{11})",
+        r"^([\w-]{11})$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _cache_player(video_id: str, player: dict) -> None:
+    PLAYER_CACHE[video_id] = {"player": player, "ts": time.time()}
+
+
+def get_cached_player(video_id: str) -> Optional[dict]:
+    entry = PLAYER_CACHE.get(video_id)
+    if not entry or time.time() - entry["ts"] > CACHE_TTL:
+        return None
+    return entry["player"]
+
+
+def _resolve_format_url(fmt: dict) -> Optional[str]:
+    if fmt.get("url"):
+        return fmt["url"]
+    cipher = fmt.get("signatureCipher") or fmt.get("cipher")
+    if not cipher:
+        return None
+    params: dict[str, str] = {}
+    for part in cipher.split("&"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        params[key] = urllib.request.unquote(value.replace("+", " "))
+    if not params.get("url") or params.get("s"):
+        return None
+    url = params["url"]
+    if params.get("sig") and params.get("sp"):
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}{params['sp']}={urllib.request.quote(params['sig'])}"
+    return url
+
+
+def _parse_formats(player: dict) -> tuple[list[dict], list[dict]]:
+    streaming = player.get("streamingData") or {}
+    progressive = []
+    adaptive = []
+    for fmt in streaming.get("formats") or []:
+        url = _resolve_format_url(fmt)
+        if url:
+            progressive.append({**fmt, "url": url})
+    for fmt in streaming.get("adaptiveFormats") or []:
+        url = _resolve_format_url(fmt)
+        if url:
+            adaptive.append({**fmt, "url": url})
+    return progressive, adaptive
+
+
+def _innertube_request(video_id: str, client: dict) -> dict:
+    body = json.dumps({
+        "context": {
+            "client": {**client["context"], "hl": "en", "gl": "US"},
+        },
+        "videoId": video_id,
+    }).encode()
+    req = urllib.request.Request(
+        f"https://www.youtube.com/youtubei/v1/player?key={INNERTUBE_API_KEY}",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": client["userAgent"],
+            "Origin": "https://www.youtube.com",
+            "Referer": f"https://www.youtube.com/watch?v={video_id}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode())
+
+
+def fetch_innertube_player(video_id: str) -> dict:
+    cached = get_cached_player(video_id)
+    if cached:
+        return cached
+
+    clients = [
+        {
+            "context": {
+                "clientName": "ANDROID",
+                "clientVersion": "20.10.38",
+                "androidSdkVersion": 30,
+                "osName": "Android",
+                "osVersion": "11",
+            },
+            "userAgent": ANDROID_UA,
+        },
+        {
+            "context": {
+                "clientName": "IOS",
+                "clientVersion": "20.10.3",
+                "deviceModel": "iPhone16,2",
+                "osVersion": "18.0",
+            },
+            "userAgent": IOS_UA,
+        },
+    ]
+
+    skip_phrases = (
+        "no longer supported",
+        "не поддерживается",
+        "application or device",
+    )
+    last_error = "Не удалось получить видео с YouTube"
+
+    for client in clients:
+        try:
+            data = _innertube_request(video_id, client)
+            progressive, adaptive = _parse_formats(data)
+            if progressive or adaptive:
+                _cache_player(video_id, data)
+                return data
+            reason = (data.get("playabilityStatus") or {}).get("reason") or ""
+            if reason and not any(p in reason.lower() for p in skip_phrases):
+                last_error = reason
+        except urllib.error.HTTPError as e:
+            last_error = f"YouTube HTTP {e.code}"
+        except Exception as e:
+            last_error = str(e)
+
+    raise ValueError(last_error)
+
+
+def _format_duration(seconds: Any) -> str:
+    total = int(seconds or 0)
+    if not total:
+        return "—"
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+def _max_height(progressive: list, adaptive: list) -> int:
+    heights = []
+    for fmt in progressive + adaptive:
+        mime = fmt.get("mimeType") or ""
+        if mime.startswith("video/"):
+            heights.append(fmt.get("height") or 0)
+    return max(heights) if heights else 0
+
+
+def build_innertube_format_list(progressive: list, adaptive: list) -> list[dict]:
+    max_h = _max_height(progressive, adaptive)
+    formats = [{
+        "format_id": "b",
+        "label": "Авто (рекомендуется)",
+        "ext": "mp4",
+        "resolution": "авто",
+        "filesize": "—",
+        "has_video": True,
+        "has_audio": True,
+        "quality": 99999,
+        "height": max_h,
+        "recommended": True,
+    }]
+
+    progressive_heights = {f.get("height") for f in progressive if f.get("height")}
+    video_heights = {f.get("height") for f in adaptive if (f.get("mimeType") or "").startswith("video/")}
+
+    for height in (1080, 720, 480, 360, 240):
+        if max_h and height > max_h:
+            continue
+        if height not in progressive_heights and not any(h <= height for h in video_heights if h):
+            continue
+        label = f"MP4 · {height}p"
+        if height not in progressive_heights:
+            label = f"MP4 · {height}p (видео)"
+        formats.append({
+            "format_id": f"q:{height}",
+            "label": label,
+            "ext": "mp4",
+            "resolution": f"{height}p",
+            "filesize": "—",
+            "has_video": True,
+            "has_audio": height in progressive_heights,
+            "quality": height,
+            "height": height,
+            "recommended": False,
+        })
+
+    if any((f.get("mimeType") or "").startswith("audio/") for f in adaptive):
+        formats.append({
+            "format_id": "audio",
+            "label": "MP3 · только аудио",
+            "ext": "m4a",
+            "resolution": "аудио",
+            "filesize": "—",
+            "has_video": False,
+            "has_audio": True,
+            "quality": 0,
+            "height": 0,
+            "recommended": False,
+        })
+
+    return formats
+
+
+def innertube_analyze(url: str) -> dict:
+    video_id = extract_youtube_id(url)
+    if not video_id:
+        raise ValueError("Неверная ссылка YouTube")
+
+    player = fetch_innertube_player(video_id)
+    details = player.get("videoDetails") or {}
+    progressive, adaptive = _parse_formats(player)
+    if not progressive and not adaptive:
+        raise ValueError("Нет доступных форматов для скачивания")
+
+    thumbs = details.get("thumbnail", {}).get("thumbnails") or []
+    thumbnail = thumbs[-1]["url"] if thumbs else f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+
+    return {
+        "title": details.get("title") or "Без названия",
+        "thumbnail": thumbnail,
+        "video_id": video_id,
+        "duration": _format_duration(details.get("lengthSeconds")),
+        "uploader": details.get("author") or "—",
+        "platform": "YouTube",
+        "formats": build_innertube_format_list(progressive, adaptive),
+        "formats_estimated": False,
+        "needs_cookies": False,
+        "via_innertube": True,
+    }
+
+
+def _ext_from_mime(mime: str, fallback: str) -> str:
+    if "audio" in mime:
+        return "m4a"
+    if "webm" in mime:
+        return "webm"
+    return fallback
+
+
+def pick_innertube_stream(video_id: str, format_id: str) -> dict:
+    player = get_cached_player(video_id) or fetch_innertube_player(video_id)
+    progressive, adaptive = _parse_formats(player)
+    fmt = (format_id or "b").strip()
+    if fmt in ("18", "worst"):
+        fmt = "b"
+
+    if fmt == "audio":
+        audios = sorted(
+            [f for f in adaptive if (f.get("mimeType") or "").startswith("audio/")],
+            key=lambda f: f.get("bitrate") or 0,
+            reverse=True,
+        )
+        if not audios:
+            raise ValueError("Аудио недоступно")
+        return {
+            "url": audios[0]["url"],
+            "ext": _ext_from_mime(audios[0].get("mimeType", ""), "m4a"),
+            "note": None,
+        }
+
+    max_h = int(fmt[2:]) if fmt.startswith("q:") else None
+    prog_sorted = sorted(progressive, key=lambda f: f.get("height") or 0, reverse=True)
+
+    if max_h:
+        match = next((f for f in prog_sorted if (f.get("height") or 0) <= max_h), None)
+        if match:
+            return {
+                "url": match["url"],
+                "ext": _ext_from_mime(match.get("mimeType", ""), "mp4"),
+                "note": None,
+            }
+    elif prog_sorted:
+        best = prog_sorted[0]
+        return {
+            "url": best["url"],
+            "ext": _ext_from_mime(best.get("mimeType", ""), "mp4"),
+            "note": None,
+        }
+
+    videos = sorted(
+        [f for f in adaptive if (f.get("mimeType") or "").startswith("video/")],
+        key=lambda f: f.get("height") or 0,
+        reverse=True,
+    )
+    if max_h:
+        match = next((f for f in videos if (f.get("height") or 0) <= max_h), None)
+        if match:
+            return {
+                "url": match["url"],
+                "ext": _ext_from_mime(match.get("mimeType", ""), "mp4"),
+                "note": "без звука",
+            }
+    if videos:
+        return {
+            "url": videos[0]["url"],
+            "ext": _ext_from_mime(videos[0].get("mimeType", ""), "mp4"),
+            "note": "без звука",
+        }
+
+    raise ValueError("Формат недоступен. Выберите «Авто».")
+
+
+def innertube_download_to_path(video_id: str, format_id: str, dest_path: str) -> dict:
+    stream = pick_innertube_stream(video_id, format_id)
+    req = urllib.request.Request(
+        stream["url"],
+        headers={
+            "User-Agent": ANDROID_UA,
+            "Referer": f"https://www.youtube.com/watch?v={video_id}",
+            "Origin": "https://www.youtube.com",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=600) as resp, open(dest_path, "wb") as out:
+        while True:
+            chunk = resp.read(1024 * 256)
+            if not chunk:
+                break
+            out.write(chunk)
+
+    return {"ext": stream["ext"], "note": stream.get("note")}

@@ -18,6 +18,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import youtube_innertube
+
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
 EXTENSION_DIR = BASE_DIR / "extension"
@@ -1017,9 +1019,18 @@ async def download_extension():
 
 @app.post("/api/analyze")
 async def analyze_video(req: AnalyzeRequest):
-    url = req.url.strip()
+    url = req.url.strip().rstrip("\\")
     if not url:
         raise HTTPException(400, "Вставьте ссылку на видео")
+
+    if is_youtube_url(url):
+        try:
+            return youtube_innertube.innertube_analyze(url)
+        except ValueError as e:
+            if "Неверная ссылка" in str(e):
+                raise HTTPException(400, str(e))
+        except Exception:
+            pass
 
     info = None
     had_cookies = has_user_cookies(req.cookies)
@@ -1089,10 +1100,7 @@ async def prepare_download(req: DownloadRequest):
         raise HTTPException(400, "Укажите ссылку и формат")
 
     if is_youtube_url(url) and IS_RENDER and not has_user_cookies(req.cookies):
-        raise HTTPException(
-            400,
-            "Для YouTube установите расширение Chrome, зайдите на youtube.com и войдите в аккаунт.",
-        )
+        pass
 
     token = store_download_token(url, req.format_id, req.cookies)
     asyncio.create_task(process_download_job(token))
@@ -1179,12 +1187,35 @@ def _download_to_file_sync(
     return filename, safe_name
 
 
+def _innertube_download_sync(url: str, format_id: str, tmp_dir: Path) -> tuple[str, str]:
+    video_id = youtube_innertube.extract_youtube_id(url)
+    if not video_id:
+        raise ValueError("Неверная ссылка YouTube")
+
+    player = youtube_innertube.fetch_innertube_player(video_id)
+    title = sanitize_filename((player.get("videoDetails") or {}).get("title") or "video")
+    stream = youtube_innertube.pick_innertube_stream(video_id, format_id)
+    ext = stream["ext"] if str(stream["ext"]).startswith(".") else f".{stream['ext']}"
+    safe_name = f"{title}{ext}"
+    dest = tmp_dir / safe_name
+    youtube_innertube.innertube_download_to_path(video_id, format_id, str(dest))
+    return str(dest), safe_name
+
+
 def _download_to_file_with_fallbacks(
     url: str,
     format_id: str,
     cookies: Optional[str],
     tmp_dir: Path,
 ) -> tuple[str, str]:
+    if is_youtube_url(url):
+        try:
+            return _innertube_download_sync(url, format_id, tmp_dir)
+        except Exception:
+            for f in tmp_dir.iterdir():
+                if f.is_file():
+                    f.unlink()
+
     attempts = build_download_format_attempts(format_id, url, cookies)
     last_error: Optional[Exception] = None
 
@@ -1209,7 +1240,7 @@ async def process_download_job(token: str) -> None:
         return
 
     job["status"] = "processing"
-    job["message"] = "Скачиваем с YouTube..."
+    job["message"] = "Готовим файл..."
     tmp_dir = DOWNLOADS_DIR / token
     tmp_dir.mkdir(parents=True, exist_ok=True)
     job["tmp_dir"] = str(tmp_dir)
@@ -1275,10 +1306,7 @@ async def _do_download(url: str, format_id: str, cookies: Optional[str]):
         raise HTTPException(400, "Укажите ссылку и формат")
 
     if is_youtube_url(url) and IS_RENDER and not has_user_cookies(cookies):
-        raise HTTPException(
-            400,
-            "Для YouTube установите расширение Chrome, зайдите на youtube.com и войдите в аккаунт.",
-        )
+        pass
 
     job_id = str(uuid.uuid4())
     tmp_dir = DOWNLOADS_DIR / job_id
