@@ -195,8 +195,99 @@ def is_retryable_ytdl_error(err: Exception) -> bool:
             "unable to download api page",
             "http error 403",
             "http error 429",
+            "not available",
+            "requested format",
         )
     )
+
+
+def parse_preset_height(format_id: str) -> Optional[int]:
+    match = re.search(r"height<=(\d+)", format_id)
+    if match:
+        return int(match.group(1))
+    if format_id in ("18", "b", "bv*+ba/b", "worst"):
+        return 360
+    return None
+
+
+def pick_progressive_format(info: dict, max_height: Optional[int] = None) -> Optional[str]:
+    candidates: list[tuple[int, str]] = []
+    for fmt in info.get("formats", []):
+        if not is_useful_format(fmt):
+            continue
+        if fmt.get("vcodec") == "none" or fmt.get("acodec") == "none":
+            continue
+        height = fmt.get("height") or 0
+        if max_height and height > max_height:
+            continue
+        candidates.append((height, str(fmt["format_id"])))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def pick_audio_format(info: dict) -> Optional[str]:
+    candidates: list[tuple[int, str]] = []
+    for fmt in info.get("formats", []):
+        if not is_useful_format(fmt):
+            continue
+        if fmt.get("vcodec") != "none":
+            continue
+        if fmt.get("acodec") == "none":
+            continue
+        abr = fmt.get("abr") or fmt.get("tbr") or 0
+        candidates.append((abr, str(fmt["format_id"])))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def build_download_format_attempts(
+    format_id: str,
+    url: str,
+    cookies: Optional[str] = None,
+) -> list[str]:
+    attempts: list[str] = []
+
+    if is_youtube_url(url):
+        try:
+            info = ytdl_extract(url, download=False, user_cookies=cookies, fast=True)
+            available = {
+                str(f["format_id"])
+                for f in info.get("formats", [])
+                if is_useful_format(f)
+            }
+
+            if format_id in available:
+                attempts.append(format_id)
+            elif format_id == "bestaudio":
+                audio_id = pick_audio_format(info)
+                if audio_id:
+                    attempts.append(audio_id)
+            else:
+                max_height = parse_preset_height(format_id)
+                picked = pick_progressive_format(info, max_height)
+                if picked:
+                    attempts.append(picked)
+        except Exception:
+            pass
+
+    if format_id not in attempts:
+        attempts.append(format_id)
+
+    if is_youtube_url(url):
+        for fallback in ("bv*+ba/b", "b", "bestvideo+bestaudio/best", "best", "worst"):
+            if fallback not in attempts:
+                attempts.append(fallback)
+
+    return attempts
+
+
+def is_format_unavailable_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return "not available" in msg or "requested format" in msg
 
 
 def is_youtube_url(url: str) -> bool:
@@ -229,16 +320,13 @@ def pick_thumbnail(info: dict) -> Optional[str]:
 
 def youtube_quality_presets() -> list[dict]:
     presets = [
-        ("18", "MP4 · 360p (стабильно)", 360, True),
-        ("bestvideo+bestaudio/best", "MP4 · лучшее качество", 99999, False),
-        ("bestvideo[height<=2160]+bestaudio/best[height<=2160]", "MP4 · 4K", 2160, False),
-        ("bestvideo[height<=1440]+bestaudio/best[height<=1440]", "MP4 · 1440p", 1440, False),
+        ("bv*+ba/b", "MP4 · лучшее качество", 99999, True),
+        ("b", "MP4 · хорошее качество", 5000, False),
         ("bestvideo[height<=1080]+bestaudio/best[height<=1080]", "MP4 · 1080p", 1080, False),
         ("bestvideo[height<=720]+bestaudio/best[height<=720]", "MP4 · 720p", 720, False),
         ("bestvideo[height<=480]+bestaudio/best[height<=480]", "MP4 · 480p", 480, False),
-        ("bestvideo[height<=240]+bestaudio/best[height<=240]", "MP4 · 240p", 240, False),
+        ("bestvideo[height<=360]+bestaudio/best[height<=360]", "MP4 · 360p", 360, False),
         ("bestaudio", "M4A · только аудио", 0, False),
-        ("worst", "MP4 · минимальный размер", 1, False),
     ]
     result = []
     for fmt_id, label, height, recommended in presets:
@@ -321,6 +409,21 @@ def build_format_list(info: dict, source_url: str = "") -> list[dict]:
         key=lambda f: (f["recommended"], f["has_video"], f["has_audio"], f["height"], f["quality"]),
         reverse=True,
     )
+
+    real_ids = {
+        f["format_id"]
+        for f in formats
+        if f["filesize"] != "—" and not re.search(r"[\[\+\*/]", f["format_id"])
+    }
+    if real_ids:
+        for f in formats:
+            if re.search(r"[\[\+\*/]", f["format_id"]) or f["format_id"] in ("bv*+ba/b", "b", "bestaudio", "worst"):
+                f["recommended"] = False
+        for f in formats:
+            if f["format_id"] in real_ids and f["has_video"] and f["has_audio"]:
+                f["recommended"] = True
+                break
+
     return formats
 
 
@@ -522,6 +625,8 @@ def friendly_ytdl_error(err: Exception) -> str:
     msg = str(err)
     if "player response" in msg.lower():
         return YOUTUBE_COOKIE_HINT
+    if is_format_unavailable_error(err):
+        return "Выбранный формат недоступен. Попробуйте «лучшее качество» или «хорошее качество»."
     if msg.startswith("ERROR:"):
         msg = msg.split(":", 1)[1].strip()
     return msg[:300]
@@ -637,18 +742,6 @@ async def download_video_get(
     return await _do_download(url, format_id, None)
 
 
-def build_download_format_attempts(format_id: str, url: str) -> list[str]:
-    attempts = [format_id]
-    if not is_youtube_url(url):
-        return attempts
-
-    simple = ["18", "bv*+ba/b", "b", "best[height<=360]/best", "worst"]
-    for fmt in simple:
-        if fmt not in attempts:
-            attempts.append(fmt)
-    return attempts
-
-
 async def _do_download_once(
     url: str,
     format_id: str,
@@ -699,12 +792,12 @@ async def _do_download(url: str, format_id: str, cookies: Optional[str]):
     last_error: Optional[Exception] = None
 
     try:
-        for fmt in build_download_format_attempts(format_id, url):
+        for fmt in build_download_format_attempts(format_id, url, cookies):
             try:
                 return await _do_download_once(url, fmt, cookies, tmp_dir)
             except yt_dlp.utils.DownloadError as e:
                 last_error = e
-                if is_bot_error(e):
+                if is_bot_error(e) or is_format_unavailable_error(e):
                     continue
                 raise HTTPException(400, f"Ошибка скачивания: {friendly_ytdl_error(e)}")
             except HTTPException:
