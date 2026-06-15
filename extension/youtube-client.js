@@ -8,6 +8,7 @@ const INNERTUBE_CLIENTS = [
       osVersion: '11',
     },
     userAgent: 'com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip',
+    withCookies: false,
   },
   {
     context: {
@@ -17,31 +18,43 @@ const INNERTUBE_CLIENTS = [
       osVersion: '18.0',
     },
     userAgent: 'com.google.ios.youtube/20.10.3 (iPhone16,2; U; CPU iOS 18_0 like Mac OS X)',
+    withCookies: false,
   },
   {
     context: {
-      clientName: 'MWEB',
-      clientVersion: '2.20250201.01.00',
+      clientName: 'ANDROID',
+      clientVersion: '20.10.38',
+      androidSdkVersion: 30,
+      osName: 'Android',
+      osVersion: '11',
     },
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+    userAgent: 'com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip',
+    withCookies: true,
   },
   {
     context: {
-      clientName: 'WEB',
-      clientVersion: '2.20250201.01.00',
+      clientName: 'ANDROID_VR',
+      clientVersion: '1.49.10',
+      deviceMake: 'Oculus',
+      deviceModel: 'Quest 3',
+      androidSdkVersion: 32,
     },
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    userAgent: 'com.google.android.apps.youtube.vr.oculus/1.49.10 (Linux; U; Android 12L)',
+    withCookies: true,
   },
   {
     context: {
-      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-      clientVersion: '2.0',
+      clientName: 'IOS',
+      clientVersion: '20.10.3',
+      deviceModel: 'iPhone16,2',
+      osVersion: '18.0',
     },
-    userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+    userAgent: 'com.google.ios.youtube/20.10.3 (iPhone16,2; U; CPU iOS 18_0 like Mac OS X)',
+    withCookies: true,
   },
 ];
 
-const WEB_USER_AGENT = INNERTUBE_CLIENTS[3].userAgent;
+const WEB_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 const DNR_RULE_ID = 91001;
 let cachedApiKey = null;
@@ -111,21 +124,36 @@ async function authorizationHeader(cookies) {
   return `SAPISIDHASH ${ts}_${hash}`;
 }
 
-async function buildYoutubeHeaders(videoId, userAgent) {
-  const cookies = await getYoutubeCookieList();
-  const auth = await authorizationHeader(cookies);
+async function buildYoutubeHeaders(videoId, userAgent, withCookies = true) {
   const headers = {
     'Content-Type': 'application/json',
-    Cookie: cookieHeader(cookies),
     'User-Agent': userAgent,
     Origin: 'https://www.youtube.com',
     Referer: `https://www.youtube.com/watch?v=${videoId}`,
   };
+  if (!withCookies) return headers;
+
+  const cookies = await getYoutubeCookieList();
+  if (!cookies.length) return headers;
+
+  headers.Cookie = cookieHeader(cookies);
+  const auth = await authorizationHeader(cookies);
   if (auth) {
     headers.Authorization = auth;
     headers['X-Origin'] = 'https://www.youtube.com';
   }
   return headers;
+}
+
+function isSkippableInnertubeError(reason) {
+  const text = (reason || '').toLowerCase();
+  return (
+    text.includes('no longer supported')
+    || text.includes('не поддерживается')
+    || text.includes('application or device')
+    || text.includes('приложении или на этом устройстве')
+    || text.includes('page needs to be reloaded')
+  );
 }
 
 async function getApiKey() {
@@ -262,23 +290,18 @@ async function fetchPlayerFromWatchPage(videoId) {
 }
 
 async function fetchPlayerFromInnertube(videoId) {
-  const cookies = await getYoutubeCookieList();
-  if (cookies.length < 2) {
-    throw new Error('Зайдите на youtube.com в Chrome и войдите в аккаунт');
-  }
-
   const apiKey = await getApiKey();
   let lastError = null;
 
   for (const client of INNERTUBE_CLIENTS) {
     try {
-      const headers = await buildYoutubeHeaders(videoId, client.userAgent);
+      const headers = await buildYoutubeHeaders(videoId, client.userAgent, client.withCookies);
       const res = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${apiKey}`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
           context: {
-            client: { ...client.context, hl: 'ru', gl: 'RU' },
+            client: { ...client.context, hl: 'en', gl: 'US' },
             user: {},
           },
           videoId,
@@ -289,14 +312,20 @@ async function fetchPlayerFromInnertube(videoId) {
       if (playerIsUsable(data)) {
         return validatePlayer(data, videoId);
       }
-      const reason = data.playabilityStatus?.reason;
-      lastError = new Error(reason || 'Нет потоков для скачивания');
+
+      const reason = data.playabilityStatus?.reason || '';
+      if (!isSkippableInnertubeError(reason)) {
+        lastError = new Error(reason || 'Нет потоков для скачивания');
+      }
     } catch (err) {
-      lastError = err;
+      if (!isSkippableInnertubeError(err.message)) {
+        lastError = err;
+      }
     }
   }
 
-  throw lastError || new Error('Не удалось получить видео с YouTube');
+  if (lastError) throw lastError;
+  throw new Error('Не удалось получить видео. Зайдите на youtube.com, войдите в аккаунт и обновите страницу (F5).');
 }
 
 async function fetchPlayerFromOpenTab(videoId) {
