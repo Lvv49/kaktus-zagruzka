@@ -1033,6 +1033,22 @@ async def root():
     )
 
 
+@app.get("/terms")
+async def terms_page():
+    return FileResponse(
+        STATIC_DIR / "terms.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/privacy")
+async def privacy_page():
+    return FileResponse(
+        STATIC_DIR / "privacy.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
 @app.get("/api/extension/download")
 async def download_extension():
     if not EXTENSION_DIR.exists():

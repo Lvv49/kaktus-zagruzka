@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=4">
+  <link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
   <div class="bg-glow"></div>
@@ -96,7 +96,12 @@
         <span class="platform-badge">и другие</span>
       </div>
 
-      <p id="cookies-status" class="cookies-status hidden"></p>
+      <p id="legal-notice" class="legal-notice">
+        Используя сервис, вы принимаете
+        <a href="/terms">Условия использования</a> и
+        <a href="/privacy">Политику конфиденциальности</a>.
+        Вы самостоятельно отвечаете за законность скачивания контента.
+      </p>
       <input type="hidden" id="cookies-input">
     </section>
 
@@ -141,6 +146,7 @@
 
   <footer class="footer">
     <p>Кактус загрузка · Бесплатный сервис для скачивания видео</p>
+    <p><a href="/terms">Условия</a> · <a href="/privacy">Конфиденциальность</a></p>
   </footer>
 
   <script src="/static/app.js?v=24"></script>

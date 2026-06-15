@@ -461,6 +461,70 @@ input[type="url"]:focus {
   z-index: 1;
 }
 
+.footer a {
+  color: var(--green-bright);
+  text-decoration: none;
+}
+
+.footer a:hover {
+  text-decoration: underline;
+}
+
+.legal-notice {
+  margin-top: 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.legal-page {
+  max-width: 760px;
+  margin: 0 auto 2rem;
+}
+
+.legal-card {
+  padding: 1.75rem;
+  line-height: 1.65;
+}
+
+.legal-card h2 {
+  font-size: 1.1rem;
+  margin: 1.5rem 0 0.75rem;
+  color: var(--green-bright);
+}
+
+.legal-card h2:first-of-type {
+  margin-top: 0;
+}
+
+.legal-card p,
+.legal-card li {
+  margin-bottom: 0.65rem;
+  color: var(--text);
+}
+
+.legal-card ul {
+  padding-left: 1.25rem;
+}
+
+.legal-card a {
+  color: var(--green-bright);
+}
+
+.legal-updated,
+.legal-note {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.legal-contact {
+  font-weight: 700;
+}
+
+.legal-back {
+  margin-top: 1.5rem;
+}
+
 .ext-install-btn {
   position: fixed;
   top: 1.25rem;
