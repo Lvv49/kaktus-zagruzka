@@ -17,7 +17,7 @@ FALLBACK_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHL6lhmF_0cBqnWkbc"
 
 PLAYER_CACHE: dict[str, dict[str, Any]] = {}
 API_KEY_CACHE: dict[str, Any] = {"key": None, "ts": 0}
-CACHE_TTL = 600
+CACHE_TTL = 1800
 API_KEY_TTL = 3600
 
 _SSL_CTX = ssl.create_default_context()
@@ -202,8 +202,15 @@ def _innertube_request(video_id: str, client: dict) -> dict:
         },
         method="POST",
     )
-    with _urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode())
+    for attempt in range(3):
+        try:
+            with _urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise
 
 
 def _fetch_player_from_watch_page(video_id: str) -> dict:
@@ -214,8 +221,16 @@ def _fetch_player_from_watch_page(video_id: str) -> dict:
             "Accept-Language": "en-US,en;q=0.9",
         },
     )
-    with _urlopen(req, timeout=30) as resp:
-        html = resp.read().decode("utf-8", errors="replace")
+    for attempt in range(3):
+        try:
+            with _urlopen(req, timeout=30) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+            break
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 2:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise
 
     player = _parse_json_after_marker(html, "ytInitialPlayerResponse")
     if player and _player_is_usable(player):
@@ -227,6 +242,13 @@ def fetch_innertube_player(video_id: str) -> dict:
     cached = get_cached_player(video_id)
     if cached:
         return cached
+
+    try:
+        player = _fetch_player_from_watch_page(video_id)
+        _cache_player(video_id, player)
+        return player
+    except Exception as watch_error:
+        last_error = str(watch_error)
 
     clients = [
         {
@@ -286,16 +308,12 @@ def fetch_innertube_player(video_id: str) -> dict:
             if reason and not _is_skippable_error(reason):
                 last_error = reason
         except urllib.error.HTTPError as e:
+            if e.code == 429:
+                last_error = "YouTube временно ограничил запросы. Подождите минуту и попробуйте снова."
+                break
             last_error = f"YouTube HTTP {e.code}"
         except Exception as e:
             last_error = str(e)
-
-    try:
-        player = _fetch_player_from_watch_page(video_id)
-        _cache_player(video_id, player)
-        return player
-    except Exception as e:
-        last_error = str(e) or last_error
 
     raise ValueError(last_error)
 

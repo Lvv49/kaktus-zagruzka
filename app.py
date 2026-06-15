@@ -1067,8 +1067,11 @@ async def analyze_video(req: AnalyzeRequest):
         try:
             return youtube_innertube.innertube_analyze(url)
         except ValueError as e:
-            if "Неверная ссылка" in str(e):
-                raise HTTPException(400, str(e))
+            msg = str(e)
+            if "Неверная ссылка" in msg:
+                raise HTTPException(400, msg)
+            if "429" in msg or "ограничил запросы" in msg:
+                raise HTTPException(429, msg)
         except Exception:
             pass
 
