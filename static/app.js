@@ -8,9 +8,13 @@ const formatsList = document.getElementById('formats-list');
 let currentUrl = '';
 let selectedFormatId = null;
 let videoData = null;
-let hasExtension = localStorage.getItem('kaktus_extension') === '1';
+let hasExtension = false;
 
 const KAKTUS_EXT = 'kaktus-ext';
+
+function normalizeYoutubeUrl(url) {
+  return (url || '').trim().replace(/\\+$/g, '');
+}
 
 function isYoutube(url) {
   return /youtube\.com|youtu\.be/i.test(url);
@@ -36,22 +40,21 @@ function updateExtensionBanners() {
 function updateCookiesStatus() {
   const status = document.getElementById('cookies-status');
   if (!status) return;
+  if (!hasExtension) {
+    status.classList.add('hidden');
+    return;
+  }
   if (getCookies()) {
-    status.textContent = '✓ Расширение подключено · cookies с вашего браузера';
-    status.classList.remove('hidden');
-  } else if (hasExtension) {
-    status.textContent = 'Расширение установлено. Зайдите на youtube.com и войдите в аккаунт.';
+    status.textContent = '✓ Расширение подключено · YouTube с вашего ПК';
     status.classList.remove('hidden');
   } else {
-    status.classList.add('hidden');
+    status.textContent = 'Расширение подключено. Зайдите на youtube.com и войдите в аккаунт.';
+    status.classList.remove('hidden');
   }
 }
 
 window.addEventListener('kaktus-extension-ready', () => {
-  hasExtension = true;
-  localStorage.setItem('kaktus_extension', '1');
-  updateExtensionBanners();
-  updateCookiesStatus();
+  detectExtension();
 });
 
 window.addEventListener('kaktus-cookies', (e) => {
@@ -63,18 +66,19 @@ window.addEventListener('kaktus-cookies', (e) => {
   }
 });
 
-function callExtension(action, payload = {}) {
+function callExtension(action, payload = {}, timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
     const requestId = Math.random().toString(36).slice(2);
     const timer = setTimeout(() => {
       window.removeEventListener('message', handler);
-      reject(new Error('Расширение не отвечает. Переустановите его и обновите страницу.'));
-    }, 90000);
+      reject(new Error('Расширение не отвечает. Установите v1.7.2+ и обновите эту страницу (F5).'));
+    }, timeoutMs);
 
     function handler(event) {
       if (event.data?.channel !== KAKTUS_EXT || event.data.requestId !== requestId) return;
       clearTimeout(timer);
       window.removeEventListener('message', handler);
+
       if (event.data.pong) {
         resolve({ ok: true });
         return;
@@ -92,20 +96,18 @@ function callExtension(action, payload = {}) {
 }
 
 async function detectExtension() {
-  if (localStorage.getItem('kaktus_extension') === '1') {
-    hasExtension = true;
-    updateExtensionBanners();
-    return true;
-  }
   try {
-    await callExtension('ping');
+    await callExtension('ping', {}, 4000);
     hasExtension = true;
     localStorage.setItem('kaktus_extension', '1');
     updateExtensionBanners();
+    updateCookiesStatus();
     return true;
   } catch {
     hasExtension = false;
+    localStorage.removeItem('kaktus_extension');
     updateExtensionBanners();
+    updateCookiesStatus();
     return false;
   }
 }
@@ -231,8 +233,6 @@ function defaultFormatIndex(formats) {
   if (idx >= 0) return idx;
   idx = formats.findIndex((f) => f.recommended);
   if (idx >= 0) return idx;
-  idx = formats.findIndex((f) => f.filesize && f.filesize !== '—');
-  if (idx >= 0) return idx;
   return 0;
 }
 
@@ -299,9 +299,9 @@ function renderFormats(formats) {
 }
 
 async function analyzeYoutubeViaExtension(url) {
-  const data = await callExtension('youtubeAnalyze', { url });
-  if (!data.ok) {
-    throw new Error(data.error || 'Не удалось получить видео');
+  const data = await callExtension('youtubeAnalyze', { url: normalizeYoutubeUrl(url) });
+  if (data.ok === false || !data.formats?.length) {
+    throw new Error(data.error || 'Не удалось получить форматы YouTube');
   }
   return data;
 }
@@ -319,8 +319,17 @@ async function analyzeCloud(url) {
   return data;
 }
 
+function requireExtensionForYoutube() {
+  if (!hasExtension) {
+    showError('Для YouTube установите расширение Chrome (кнопка справа вверху), обновите страницу (F5) и зайдите на youtube.com.');
+    return false;
+  }
+  return true;
+}
+
 async function analyze() {
-  const url = urlInput.value.trim();
+  const url = normalizeYoutubeUrl(urlInput.value);
+  urlInput.value = url;
   if (!url) {
     showError('Вставьте ссылку на видео');
     return;
@@ -328,8 +337,7 @@ async function analyze() {
 
   await detectExtension();
 
-  if (isYoutube(url) && !hasExtension) {
-    showError('Для YouTube установите расширение Chrome (кнопка справа вверху), зайдите на youtube.com и войдите в аккаунт.');
+  if (isYoutube(url) && !requireExtensionForYoutube()) {
     return;
   }
 
@@ -361,12 +369,12 @@ async function analyze() {
 }
 
 async function downloadYoutubeViaExtension() {
-  showProgress('Скачиваем через расширение с вашего ПК...');
+  showProgress('Получаем ссылку и скачиваем с вашего ПК...');
   const data = await callExtension('youtubeDownload', {
     url: currentUrl,
     formatId: selectedFormatId,
   });
-  if (!data.ok) {
+  if (data.ok === false) {
     throw new Error(data.error || 'Ошибка скачивания');
   }
   if (data.note) {
@@ -407,8 +415,7 @@ async function download() {
   setLoading(downloadBtn, true);
 
   if (isYoutube(currentUrl)) {
-    if (!hasExtension) {
-      showError('Для YouTube нужно расширение Chrome. Скачайте его кнопкой «Расширение Chrome».');
+    if (!requireExtensionForYoutube()) {
       setLoading(downloadBtn, false);
       return;
     }
@@ -445,7 +452,10 @@ urlInput.addEventListener('paste', () => {
 });
 
 urlInput.addEventListener('input', () => {
-  if (isYoutube(urlInput.value)) updateCookiesStatus();
+  if (isYoutube(urlInput.value)) {
+    detectExtension();
+    updateCookiesStatus();
+  }
 });
 
 const extInstallBtn = document.getElementById('ext-install-btn');
@@ -473,5 +483,5 @@ if (extInstallBtn && extModal) {
 }
 
 detectExtension();
-updateCookiesStatus();
-updateExtensionBanners();
+setInterval(detectExtension, 12000);
+window.addEventListener('focus', detectExtension);

@@ -38,7 +38,8 @@ window.addEventListener('message', (event) => {
   }
 
   if (action === 'youtubeAnalyze') {
-    chrome.runtime.sendMessage({ type: 'youtubeAnalyze', url: payload.url }, (resp) => {
+    const url = (payload?.url || '').trim().replace(/\\+$/g, '');
+    chrome.runtime.sendMessage({ type: 'youtubeAnalyze', url }, (resp) => {
       if (chrome.runtime.lastError) {
         window.postMessage({
           channel: KAKTUS_EXT,
@@ -48,16 +49,26 @@ window.addEventListener('message', (event) => {
         }, '*');
         return;
       }
+      if (!resp || resp.ok === false) {
+        window.postMessage({
+          channel: KAKTUS_EXT,
+          requestId,
+          ok: false,
+          error: resp?.error || 'Не удалось получить видео',
+        }, '*');
+        return;
+      }
       window.postMessage({ channel: KAKTUS_EXT, requestId, ...resp }, '*');
     });
     return;
   }
 
   if (action === 'youtubeDownload') {
+    const url = (payload?.url || '').trim().replace(/\\+$/g, '');
     chrome.runtime.sendMessage({
       type: 'youtubeDownloadAndSave',
-      url: payload.url,
-      formatId: payload.formatId,
+      url,
+      formatId: payload?.formatId || 'b',
     }, (resp) => {
       if (chrome.runtime.lastError) {
         window.postMessage({
@@ -65,6 +76,15 @@ window.addEventListener('message', (event) => {
           requestId,
           ok: false,
           error: chrome.runtime.lastError.message,
+        }, '*');
+        return;
+      }
+      if (!resp || resp.ok === false) {
+        window.postMessage({
+          channel: KAKTUS_EXT,
+          requestId,
+          ok: false,
+          error: resp?.error || 'Ошибка скачивания',
         }, '*');
         return;
       }
