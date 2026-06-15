@@ -348,6 +348,11 @@ def store_download_token(url: str, format_id: str, cookies: Optional[str]) -> st
         "format_id": format_id,
         "cookies": cookies,
         "expires": time.time() + TOKEN_TTL_SEC,
+        "status": "pending",
+        "error": None,
+        "file_path": None,
+        "filename": None,
+        "tmp_dir": None,
     }
     return token
 
@@ -356,12 +361,14 @@ def cleanup_download_tokens() -> None:
     now = time.time()
     expired = [key for key, job in DOWNLOAD_TOKENS.items() if job["expires"] < now]
     for key in expired:
-        DOWNLOAD_TOKENS.pop(key, None)
+        job = DOWNLOAD_TOKENS.pop(key, None)
+        if job and job.get("tmp_dir"):
+            shutil.rmtree(job["tmp_dir"], ignore_errors=True)
 
 
-def pop_download_token(token: str) -> Optional[dict]:
+def get_download_job(token: str) -> Optional[dict]:
     cleanup_download_tokens()
-    job = DOWNLOAD_TOKENS.pop(token, None)
+    job = DOWNLOAD_TOKENS.get(token)
     if not job or job["expires"] < time.time():
         return None
     return job
@@ -920,16 +927,47 @@ async def prepare_download(req: DownloadRequest):
     url = req.url.strip()
     if not url or not req.format_id:
         raise HTTPException(400, "Укажите ссылку и формат")
+
+    if is_youtube_url(url) and IS_RENDER and not has_user_cookies(req.cookies):
+        raise HTTPException(
+            400,
+            "Для YouTube установите расширение Chrome, зайдите на youtube.com и войдите в аккаунт.",
+        )
+
     token = store_download_token(url, req.format_id, req.cookies)
+    asyncio.create_task(process_download_job(token))
     return {"token": token, "url": f"/api/download/token/{token}"}
+
+
+@app.get("/api/download/status/{token}")
+async def download_status(token: str):
+    job = get_download_job(token)
+    if not job:
+        raise HTTPException(404, "Ссылка устарела. Нажмите «Скачать» снова.")
+    return {
+        "status": job["status"],
+        "error": job.get("error"),
+        "filename": job.get("filename"),
+    }
 
 
 @app.get("/api/download/token/{token}")
 async def download_by_token(token: str):
-    job = pop_download_token(token)
+    job = get_download_job(token)
     if not job:
         raise HTTPException(404, "Ссылка устарела. Нажмите «Скачать» снова.")
-    return await _do_download(job["url"], job["format_id"], job.get("cookies"))
+    if job["status"] == "error":
+        raise HTTPException(400, job.get("error") or "Ошибка скачивания")
+    if job["status"] != "ready" or not job.get("file_path"):
+        raise HTTPException(425, "Файл ещё готовится. Подождите немного.")
+
+    tmp_dir = Path(job["tmp_dir"]) if job.get("tmp_dir") else None
+    return FileResponse(
+        job["file_path"],
+        media_type="application/octet-stream",
+        filename=job["filename"] or "video.mp4",
+        background=_cleanup(tmp_dir) if tmp_dir else None,
+    )
 
 
 @app.post("/api/download")
@@ -945,12 +983,12 @@ async def download_video_get(
     return await _do_download(url, format_id, None)
 
 
-async def _do_download_once(
+def _download_to_file_sync(
     url: str,
     format_id: str,
     cookies: Optional[str],
     tmp_dir: Path,
-) -> FileResponse:
+) -> tuple[str, str]:
     extra = {
         "format": format_id,
         "outtmpl": str(tmp_dir / "%(title)s.%(ext)s"),
@@ -959,14 +997,7 @@ async def _do_download_once(
         "socket_timeout": 60,
     }
 
-    info = await asyncio.to_thread(
-        ytdl_extract,
-        url,
-        extra,
-        True,
-        cookies,
-        False,
-    )
+    info = ytdl_extract(url, extra=extra, download=True, user_cookies=cookies)
 
     with yt_dlp.YoutubeDL(build_ytdl_opts(extra, use_cookies=False)) as ydl:
         filename = ydl.prepare_filename(info)
@@ -978,14 +1009,65 @@ async def _do_download_once(
                 break
 
     if not os.path.exists(filename):
-        raise HTTPException(500, "Файл не был создан")
+        raise yt_dlp.utils.DownloadError("Файл не был создан")
 
     title = sanitize_filename(info.get("title", "video"))
     ext = Path(filename).suffix or ".mp4"
     safe_name = f"{title}{ext}"
+    return filename, safe_name
+
+
+async def process_download_job(token: str) -> None:
+    job = DOWNLOAD_TOKENS.get(token)
+    if not job or job["status"] != "pending":
+        return
+
+    job["status"] = "processing"
+    tmp_dir = DOWNLOADS_DIR / token
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    job["tmp_dir"] = str(tmp_dir)
+
+    url = job["url"]
+    cookies = job.get("cookies")
+    format_string = build_ytdl_format_string(job["format_id"], url, cookies)
+
+    try:
+        file_path, safe_name = await asyncio.to_thread(
+            _download_to_file_sync,
+            url,
+            format_string,
+            cookies,
+            tmp_dir,
+        )
+        job["file_path"] = file_path
+        job["filename"] = safe_name
+        job["status"] = "ready"
+    except yt_dlp.utils.DownloadError as e:
+        job["status"] = "error"
+        job["error"] = f"Ошибка скачивания: {friendly_ytdl_error(e, has_user_cookies(cookies))}"
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    except Exception as e:
+        job["status"] = "error"
+        job["error"] = f"Ошибка: {str(e)[:200]}"
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+async def _do_download_once(
+    url: str,
+    format_id: str,
+    cookies: Optional[str],
+    tmp_dir: Path,
+) -> FileResponse:
+    file_path, safe_name = await asyncio.to_thread(
+        _download_to_file_sync,
+        url,
+        format_id,
+        cookies,
+        tmp_dir,
+    )
 
     return FileResponse(
-        filename,
+        file_path,
         media_type="application/octet-stream",
         filename=safe_name,
         background=_cleanup(tmp_dir),

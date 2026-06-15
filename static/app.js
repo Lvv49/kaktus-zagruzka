@@ -113,6 +113,27 @@ function renderVideoInfo(data) {
   setThumbnail(thumb, placeholder, data);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollDownloadReady(token, onProgress) {
+  for (let i = 0; i < 300; i++) {
+    const res = await fetch(`/api/download/status/${token}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || 'Ошибка подготовки файла');
+    }
+    if (data.status === 'ready') return data;
+    if (data.status === 'error') {
+      throw new Error(data.error || 'Ошибка скачивания');
+    }
+    if (onProgress) onProgress(i, data.status);
+    await sleep(2000);
+  }
+  throw new Error('Слишком долго. Выберите формат «хорошее качество» и попробуйте снова.');
+}
+
 function defaultFormatIndex(formats) {
   let idx = formats.findIndex((f) => f.format_id === 'b');
   if (idx >= 0) return idx;
@@ -247,7 +268,7 @@ async function download() {
   }
 
   try {
-    if (btnText) btnText.textContent = 'Запускаем...';
+    if (btnText) btnText.textContent = 'Подключаемся...';
 
     const prep = await fetch('/api/download/prepare', {
       method: 'POST',
@@ -262,6 +283,12 @@ async function download() {
       throw new Error(data.detail || 'Ошибка скачивания');
     }
 
+    await pollDownloadReady(data.token, (i, status) => {
+      if (btnText) {
+        btnText.textContent = status === 'processing' ? `Готовим... ${i * 2}с` : 'Ожидаем...';
+      }
+    });
+
     const a = document.createElement('a');
     a.href = data.url;
     a.style.display = 'none';
@@ -269,7 +296,7 @@ async function download() {
     a.click();
     document.body.removeChild(a);
 
-    showError('Скачивание началось — длинные видео готовятся 2–5 минут, не закрывайте вкладку.');
+    hideError();
   } catch (err) {
     showError(err.message);
   } finally {

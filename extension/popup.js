@@ -146,6 +146,27 @@ function setThumbnail(thumb, data) {
   tryNext();
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollDownloadReady(token, onProgress) {
+  for (let i = 0; i < 300; i++) {
+    const res = await fetch(`${apiUrl}/api/download/status/${token}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || 'Ошибка подготовки файла');
+    }
+    if (data.status === 'ready') return data;
+    if (data.status === 'error') {
+      throw new Error(data.error || 'Ошибка скачивания');
+    }
+    if (onProgress) onProgress(i, data.status);
+    await sleep(2000);
+  }
+  throw new Error('Слишком долго. Выберите формат «хорошее качество» (b) и попробуйте снова.');
+}
+
 function sanitizeFilename(name) {
   return (name || 'video').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim().slice(0, 120) || 'video';
 }
@@ -239,7 +260,10 @@ async function download() {
   }
 
   try {
-    if (btnText) btnText.textContent = 'Запускаем...';
+    if (btnText) btnText.textContent = 'Подключаемся...';
+    try {
+      await fetch(`${apiUrl}/`, { method: 'HEAD' });
+    } catch {}
 
     const prep = await fetch(`${apiUrl}/api/download/prepare`, {
       method: 'POST',
@@ -256,7 +280,13 @@ async function download() {
       throw new Error(data.detail || 'Ошибка скачивания');
     }
 
-    const filename = `${sanitizeFilename(videoData?.title)}.mp4`;
+    const ready = await pollDownloadReady(data.token, (i, status) => {
+      if (btnText) {
+        btnText.textContent = status === 'processing' ? `Готовим... ${i * 2}с` : 'Ожидаем...';
+      }
+    });
+
+    const filename = ready.filename || `${sanitizeFilename(videoData?.title)}.mp4`;
     const downloadUrl = `${apiUrl}${data.url}`;
 
     await new Promise((resolve, reject) => {
@@ -273,8 +303,7 @@ async function download() {
       );
     });
 
-    errorBox.style.color = '';
-    showError('Скачивание началось — смотрите панель загрузок Chrome (2–5 мин для длинных видео).');
+    showError('Файл готов — скачивание в панели Chrome.');
   } catch (err) {
     showError(err.message);
   } finally {

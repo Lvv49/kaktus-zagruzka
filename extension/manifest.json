@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Кактус загрузка",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Скачивай видео с YouTube, VK, TikTok, Pinterest и других соцсетей",
   "action": {
     "default_popup": "popup.html",
