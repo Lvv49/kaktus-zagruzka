@@ -149,6 +149,56 @@ def get_format_label(fmt: dict) -> str:
     return " · ".join(parts)
 
 
+def extract_youtube_id(url: str) -> Optional[str]:
+    patterns = [
+        r"(?:v=|/embed/|/shorts/|/live/)([\w-]{11})",
+        r"youtu\.be/([\w-]{11})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url, re.I)
+        if match:
+            return match.group(1)
+    return None
+
+
+def youtube_stub_info(url: str) -> dict:
+    video_id = extract_youtube_id(url)
+    if not video_id:
+        raise ValueError("Не удалось определить ID видео YouTube")
+    return {
+        "id": video_id,
+        "title": "YouTube видео",
+        "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+        "uploader": "—",
+        "duration": None,
+        "extractor_key": "youtube",
+        "formats": [],
+        "webpage_url": url,
+    }
+
+
+def default_youtube_clients() -> list[str]:
+    return ["android_vr", "tv", "tv_embedded", "ios", "android", "mweb"]
+
+
+def is_retryable_ytdl_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(
+        word in msg
+        for word in (
+            "bot",
+            "sign in",
+            "cookies",
+            "operation not permitted",
+            "could not copy",
+            "player response",
+            "unable to download api page",
+            "http error 403",
+            "http error 429",
+        )
+    )
+
+
 def is_youtube_url(url: str) -> bool:
     return bool(re.search(r"(youtube\.com|youtu\.be|youtube-nocookie\.com)", url, re.I))
 
@@ -179,13 +229,13 @@ def pick_thumbnail(info: dict) -> Optional[str]:
 
 def youtube_quality_presets() -> list[dict]:
     presets = [
-        ("bestvideo+bestaudio/best", "MP4 · лучшее качество", 99999, True),
+        ("18", "MP4 · 360p (стабильно)", 360, True),
+        ("bestvideo+bestaudio/best", "MP4 · лучшее качество", 99999, False),
         ("bestvideo[height<=2160]+bestaudio/best[height<=2160]", "MP4 · 4K", 2160, False),
         ("bestvideo[height<=1440]+bestaudio/best[height<=1440]", "MP4 · 1440p", 1440, False),
         ("bestvideo[height<=1080]+bestaudio/best[height<=1080]", "MP4 · 1080p", 1080, False),
         ("bestvideo[height<=720]+bestaudio/best[height<=720]", "MP4 · 720p", 720, False),
         ("bestvideo[height<=480]+bestaudio/best[height<=480]", "MP4 · 480p", 480, False),
-        ("18", "MP4 · 360p (стабильно)", 360, False),
         ("bestvideo[height<=240]+bestaudio/best[height<=240]", "MP4 · 240p", 240, False),
         ("bestaudio", "M4A · только аудио", 0, False),
         ("worst", "MP4 · минимальный размер", 1, False),
@@ -281,15 +331,14 @@ def build_ytdl_opts(
     cookiefile: Optional[str] = None,
     player_clients: Optional[list[str]] = None,
 ) -> dict:
-    clients = player_clients or (
-        ["ios", "android", "mweb", "web", "tv_embedded", "web_creator"]
-        if IS_RENDER
-        else ["ios", "android", "mweb", "web", "tv_embedded"]
-    )
+    clients = player_clients or default_youtube_clients()
     opts: dict = {
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
+        "socket_timeout": 20,
+        "retries": 2,
+        "fragment_retries": 2,
         "extractor_args": {
             "youtube": {
                 "player_client": clients,
@@ -373,11 +422,48 @@ def fallback_formats() -> list[dict]:
     ]
 
 
+def build_extract_attempts(
+    user_cookie_path: Optional[str],
+    fast: bool,
+) -> list[tuple[Optional[str], Optional[str], bool, Optional[list[str]]]]:
+    client_sets = (
+        [["android_vr"], ["tv"], ["ios"], ["android"]]
+        if fast
+        else [
+            ["android_vr"],
+            ["tv"],
+            ["tv_embedded"],
+            ["ios"],
+            ["android"],
+            ["mweb"],
+            ["ios", "android"],
+            None,
+        ]
+    )
+
+    attempts: list[tuple[Optional[str], Optional[str], bool, Optional[list[str]]]] = []
+
+    if user_cookie_path:
+        for clients in client_sets:
+            attempts.append((user_cookie_path, None, True, clients))
+
+    for clients in client_sets:
+        attempts.append((None, None, True, clients))
+        attempts.append((None, None, False, clients))
+
+    if not IS_RENDER and not user_cookie_path:
+        for browser in cookie_browser_fallbacks()[:2]:
+            attempts.append((None, browser, True, None))
+
+    return attempts
+
+
 def ytdl_extract(
     url: str,
     extra: Optional[dict] = None,
     download: bool = False,
     user_cookies: Optional[str] = None,
+    fast: bool = False,
 ) -> dict:
     base_extra = dict(extra or {})
     if not download:
@@ -385,37 +471,8 @@ def ytdl_extract(
         base_extra.setdefault("ignore_no_formats_error", True)
     base_extra.setdefault("extract_flat", False)
 
-    client_sets = (
-        [
-            ["ios"],
-            ["android"],
-            ["ios", "android"],
-            ["mweb"],
-            None,
-            ["mweb", "web_creator"],
-            ["tv_embedded", "web"],
-        ]
-        if download
-        else [
-            None,
-            ["ios", "android"],
-            ["mweb", "web_creator"],
-            ["tv_embedded", "web"],
-        ]
-    )
-
     with temp_cookie_file(user_cookies) as user_cookie_path:
-        attempts: list[tuple[Optional[str], Optional[str], bool, Optional[list[str]]]] = []
-
-        for clients in client_sets:
-            attempts.append((None, None, False, clients))
-            if user_cookie_path:
-                attempts.append((user_cookie_path, None, True, clients))
-
-        if not user_cookie_path and not IS_RENDER:
-            for browser in cookie_browser_fallbacks():
-                attempts.append((None, browser, True, None))
-
+        attempts = build_extract_attempts(user_cookie_path, fast=fast or not download)
         collected: list[dict] = []
         last_error: Optional[Exception] = None
 
@@ -432,14 +489,12 @@ def ytdl_extract(
                     info = ydl.extract_info(url, download=download)
                 if not is_valid_info(info):
                     continue
+                if fast or not download:
+                    return info
                 collected.append(info)
             except yt_dlp.utils.DownloadError as e:
                 last_error = e
-                err = str(e).lower()
-                if any(
-                    word in err
-                    for word in ("bot", "sign in", "cookies", "operation not permitted", "could not copy")
-                ):
+                if is_retryable_ytdl_error(e):
                     continue
                 raise
 
@@ -458,14 +513,15 @@ YOUTUBE_COOKIE_HINT = (
 
 
 def is_bot_error(err: Exception) -> bool:
-    msg = str(err).lower()
-    return any(word in msg for word in ("bot", "sign in", "cookies"))
+    return is_retryable_ytdl_error(err)
 
 
 def friendly_ytdl_error(err: Exception) -> str:
     if is_bot_error(err):
         return YOUTUBE_COOKIE_HINT
     msg = str(err)
+    if "player response" in msg.lower():
+        return YOUTUBE_COOKIE_HINT
     if msg.startswith("ERROR:"):
         msg = msg.split(":", 1)[1].strip()
     return msg[:300]
@@ -523,12 +579,17 @@ async def analyze_video(req: AnalyzeRequest):
     if not url:
         raise HTTPException(400, "Вставьте ссылку на видео")
 
+    info = None
     try:
-        info = ytdl_extract(url, download=False, user_cookies=req.cookies)
-    except yt_dlp.utils.DownloadError as e:
-        raise HTTPException(400, f"Не удалось получить видео: {friendly_ytdl_error(e)}")
-    except Exception as e:
-        raise HTTPException(500, f"Ошибка сервера: {str(e)}")
+        info = ytdl_extract(url, download=False, user_cookies=req.cookies, fast=True)
+    except Exception:
+        if is_youtube_url(url):
+            try:
+                info = youtube_stub_info(url)
+            except ValueError:
+                pass
+        if info is None:
+            raise HTTPException(400, "Не удалось получить видео. Проверьте ссылку.")
 
     if not info.get("title") and not count_useful_formats(info):
         raise HTTPException(400, "Видео не найдено. Проверьте ссылку.")

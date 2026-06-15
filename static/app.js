@@ -164,6 +164,7 @@ async function analyze() {
   hideError();
   setLoading(analyzeBtn, true);
   resultSection.classList.add('hidden');
+  analyzeBtn.querySelector('.btn-text').textContent = 'Ищем...';
 
   try {
     const res = await fetch('/api/analyze', {
@@ -187,6 +188,7 @@ async function analyze() {
     showError(err.message);
   } finally {
     setLoading(analyzeBtn, false);
+    analyzeBtn.querySelector('.btn-text').textContent = 'Найти форматы';
   }
 }
 
