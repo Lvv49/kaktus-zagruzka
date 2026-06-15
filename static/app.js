@@ -123,15 +123,24 @@ function renderFormats(formats) {
     countEl.textContent = `Найдено форматов: ${formats.length}`;
   }
 
+  let defaultIndex = formats.findIndex((f) => f.recommended);
+  if (defaultIndex < 0) {
+    defaultIndex = formats.findIndex((f) => f.filesize && f.filesize !== '—');
+  }
+  if (defaultIndex < 0) {
+    defaultIndex = formats.findIndex((f) => f.format_id === 'b' || f.format_id === 'bv*+ba/b');
+  }
+  if (defaultIndex < 0) defaultIndex = 0;
+
   formats.forEach((fmt, i) => {
     const item = document.createElement('label');
-    item.className = 'format-item' + (i === 0 ? ' selected' : '');
+    item.className = 'format-item' + (i === defaultIndex ? ' selected' : '');
 
     const radio = document.createElement('input');
     radio.type = 'radio';
     radio.name = 'format';
     radio.value = fmt.format_id;
-    radio.checked = i === 0;
+    radio.checked = i === defaultIndex;
 
     const label = document.createElement('span');
     label.className = 'format-label';
@@ -165,7 +174,7 @@ function renderFormats(formats) {
 
     formatsList.appendChild(item);
 
-    if (i === 0) {
+    if (i === defaultIndex) {
       selectedFormatId = fmt.format_id;
       downloadBtn.disabled = false;
     }
@@ -205,6 +214,13 @@ async function analyze() {
     videoData = data;
     renderVideoInfo(data);
     renderFormats(data.formats);
+
+    if (data.formats_estimated && !getCookies()) {
+      showError('Форматы примерные. Для YouTube установите расширение и войдите на youtube.com.');
+    } else if (data.formats_estimated) {
+      showError('Форматы примерные — обновите страницу youtube.com (F5) и попробуйте снова.');
+    }
+
     resultSection.classList.remove('hidden');
   } catch (err) {
     showError(err.message);
@@ -219,9 +235,18 @@ async function download() {
 
   hideError();
   setLoading(downloadBtn, true);
+  const btnText = downloadBtn.querySelector('.btn-text');
+
+  if (isYoutube(currentUrl) && !getCookies()) {
+    showError('Для YouTube установите расширение Chrome, зайдите на youtube.com и войдите в аккаунт.');
+    setLoading(downloadBtn, false);
+    return;
+  }
 
   try {
-    const prep = await fetch('/api/download/prepare', {
+    if (btnText) btnText.textContent = 'Готовим файл...';
+
+    const res = await fetch('/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody(currentUrl, {
@@ -229,20 +254,28 @@ async function download() {
       })),
     });
 
-    const data = await prep.json();
-    if (!prep.ok) {
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
       throw new Error(data.detail || 'Ошибка скачивания');
     }
 
+    if (btnText) btnText.textContent = 'Сохраняем...';
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/i);
+    const filename = match ? decodeURIComponent(match[1]) : 'video.mp4';
+
     const a = document.createElement('a');
-    a.href = data.url;
-    a.style.display = 'none';
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
   } catch (err) {
     showError(err.message);
   } finally {
+    if (btnText) btnText.textContent = 'Скачать';
     setLoading(downloadBtn, false);
   }
 }

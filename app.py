@@ -187,24 +187,30 @@ def default_youtube_clients(with_cookies: bool = False) -> list[str]:
     return ["android_vr", "tv", "tv_embedded", "ios", "android", "mweb"]
 
 
-def is_retryable_ytdl_error(err: Exception) -> bool:
+def is_format_unavailable_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return "not available" in msg or "requested format" in msg
+
+
+def is_bot_ytdl_error(err: Exception) -> bool:
     msg = str(err).lower()
     return any(
         word in msg
         for word in (
             "bot",
             "sign in",
+            "confirm you're not a bot",
             "cookies",
-            "operation not permitted",
-            "could not copy",
             "player response",
             "unable to download api page",
             "http error 403",
             "http error 429",
-            "not available",
-            "requested format",
         )
     )
+
+
+def is_retryable_ytdl_error(err: Exception) -> bool:
+    return is_bot_ytdl_error(err) or is_format_unavailable_error(err)
 
 
 def parse_preset_height(format_id: str) -> Optional[int]:
@@ -341,7 +347,7 @@ def build_download_format_attempts(
         attempts.append(format_id)
 
     if is_youtube_url(url):
-        for fallback in ("bv*+ba/b", "b", "bestvideo+bestaudio/best", "best", "worst"):
+        for fallback in ("b", "bv*+ba/b", "bestvideo+bestaudio/best", "best", "worst"):
             if fallback not in attempts:
                 attempts.append(fallback)
 
@@ -349,10 +355,10 @@ def build_download_format_attempts(
 
 
 def prioritize_download_formats(attempts: list[str]) -> list[str]:
-    numeric = [a for a in attempts if re.fullmatch(r"\d+", a)]
     quick = [a for a in attempts if a in ("b", "bv*+ba/b", "worst", "best")]
-    merge = [a for a in attempts if a not in numeric and a not in quick]
-    return list(dict.fromkeys(numeric + quick + merge))
+    numeric = [a for a in attempts if re.fullmatch(r"\d+", a)]
+    merge = [a for a in attempts if a not in quick and a not in numeric]
+    return list(dict.fromkeys(quick + numeric + merge))
 
 
 def build_ytdl_format_string(
@@ -576,6 +582,11 @@ def build_format_list(info: dict, source_url: str = "") -> list[dict]:
             if f["format_id"] in real_ids and f["has_video"] and f["has_audio"]:
                 f["recommended"] = True
                 break
+        if not any(f["recommended"] for f in formats):
+            for f in formats:
+                if f["format_id"] == "b":
+                    f["recommended"] = True
+                    break
 
     return formats
 
@@ -594,9 +605,9 @@ def build_ytdl_opts(
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
-        "socket_timeout": 20,
-        "retries": 2,
-        "fragment_retries": 2,
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 5,
         "extractor_args": {
             "youtube": {
                 "player_client": clients,
@@ -804,20 +815,23 @@ def has_user_cookies(cookies: Optional[str]) -> bool:
 
 
 def friendly_ytdl_error(err: Exception, had_user_cookies: bool = False) -> str:
-    if is_bot_error(err):
+    msg = str(err).lower()
+    if "drm" in msg:
+        return "Это видео защищено DRM — скачать его нельзя."
+    if is_format_unavailable_error(err):
+        return "Выбранный формат недоступен. Выберите «лучшее качество» или формат с размером файла."
+    if is_bot_ytdl_error(err):
         return YOUTUBE_COOKIE_STALE_HINT if had_user_cookies else YOUTUBE_COOKIE_HINT
     msg = str(err)
     if "player response" in msg.lower():
-        return YOUTUBE_COOKIE_HINT
-    if is_format_unavailable_error(err):
-        return "Выбранный формат недоступен. Попробуйте «лучшее качество»."
+        return YOUTUBE_COOKIE_STALE_HINT if had_user_cookies else YOUTUBE_COOKIE_HINT
     if msg.startswith("ERROR:"):
         msg = msg.split(":", 1)[1].strip()
     return msg[:300]
 
 
 def is_bot_error(err: Exception) -> bool:
-    return is_retryable_ytdl_error(err)
+    return is_bot_ytdl_error(err)
 
 
 def is_useful_format(fmt: dict) -> bool:
@@ -873,11 +887,24 @@ async def analyze_video(req: AnalyzeRequest):
         raise HTTPException(400, "Вставьте ссылку на видео")
 
     info = None
+    had_cookies = has_user_cookies(req.cookies)
     try:
-        use_fast = True
-        info = ytdl_extract(url, download=False, user_cookies=req.cookies, fast=use_fast)
+        info = ytdl_extract(
+            url,
+            download=False,
+            user_cookies=req.cookies,
+            fast=not had_cookies,
+        )
+    except yt_dlp.utils.DownloadError as e:
+        if is_youtube_url(url) and not had_cookies:
+            try:
+                info = youtube_stub_info(url)
+            except ValueError:
+                pass
+        if info is None:
+            raise HTTPException(400, f"Не удалось получить видео: {friendly_ytdl_error(e, had_cookies)}")
     except Exception:
-        if is_youtube_url(url):
+        if is_youtube_url(url) and not had_cookies:
             try:
                 info = youtube_stub_info(url)
             except ValueError:
@@ -915,6 +942,8 @@ async def analyze_video(req: AnalyzeRequest):
         "uploader": info.get("uploader") or info.get("channel") or "—",
         "platform": info.get("extractor_key", "—"),
         "formats": formats,
+        "formats_estimated": is_youtube_url(url) and count_useful_formats(info) == 0,
+        "needs_cookies": is_youtube_url(url) and not had_cookies,
     }
 
 
@@ -959,6 +988,7 @@ async def _do_download_once(
         "outtmpl": str(tmp_dir / "%(title)s.%(ext)s"),
         "merge_output_format": "mp4",
         "concurrent_fragment_downloads": 4,
+        "socket_timeout": 60,
     }
 
     info = ytdl_extract(url, extra=extra, download=True, user_cookies=cookies)
@@ -992,26 +1022,45 @@ async def _do_download(url: str, format_id: str, cookies: Optional[str]):
     if not url or not format_id:
         raise HTTPException(400, "Укажите ссылку и формат")
 
+    if is_youtube_url(url) and IS_RENDER and not has_user_cookies(cookies):
+        raise HTTPException(
+            400,
+            "Для YouTube установите расширение Chrome, зайдите на youtube.com и войдите в аккаунт.",
+        )
+
     job_id = str(uuid.uuid4())
     tmp_dir = DOWNLOADS_DIR / job_id
     tmp_dir.mkdir(parents=True)
 
-    format_string = build_ytdl_format_string(format_id, url, cookies)
+    attempts = prioritize_download_formats(
+        build_download_format_attempts(format_id, url, cookies)
+    )
+    last_error: Optional[Exception] = None
 
-    try:
-        return await _do_download_once(url, format_string, cookies, tmp_dir)
-    except yt_dlp.utils.DownloadError as e:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+    for fmt_attempt in attempts:
+        try:
+            return await _do_download_once(url, fmt_attempt, cookies, tmp_dir)
+        except yt_dlp.utils.DownloadError as e:
+            last_error = e
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            tmp_dir.mkdir(parents=True)
+            if is_format_unavailable_error(e):
+                continue
+            break
+        except HTTPException:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+        except Exception as e:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise HTTPException(500, f"Ошибка: {str(e)}")
+
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    if last_error:
         raise HTTPException(
             400,
-            f"Ошибка скачивания: {friendly_ytdl_error(e, has_user_cookies(cookies))}",
+            f"Ошибка скачивания: {friendly_ytdl_error(last_error, has_user_cookies(cookies))}",
         )
-    except HTTPException:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise
-    except Exception as e:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise HTTPException(500, f"Ошибка: {str(e)}")
+    raise HTTPException(400, "Не удалось скачать видео")
 
 
 def _cleanup(path: Path):
