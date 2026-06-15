@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir -U yt-dlp
 
 COPY app.py .
+COPY youtube_innertube.py .
 COPY static/ static/
 COPY extension/ extension/
 

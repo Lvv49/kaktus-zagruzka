@@ -10,7 +10,10 @@ let selectedFormatId = null;
 let videoData = null;
 
 function normalizeYoutubeUrl(url) {
-  return (url || '').trim().replace(/\\+$/g, '');
+  let u = (url || '').trim().replace(/\\+$/g, '');
+  if (u.startsWith('//')) u = `https:${u}`;
+  if (/^www\./i.test(u)) u = `https://${u}`;
+  return u;
 }
 
 function isYoutube(url) {

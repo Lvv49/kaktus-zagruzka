@@ -1019,7 +1019,7 @@ async def download_extension():
 
 @app.post("/api/analyze")
 async def analyze_video(req: AnalyzeRequest):
-    url = req.url.strip().rstrip("\\")
+    url = youtube_innertube.normalize_url(req.url.strip())
     if not url:
         raise HTTPException(400, "Вставьте ссылку на видео")
 
@@ -1095,7 +1095,7 @@ async def analyze_video(req: AnalyzeRequest):
 
 @app.post("/api/download/prepare")
 async def prepare_download(req: DownloadRequest):
-    url = req.url.strip()
+    url = youtube_innertube.normalize_url(req.url.strip())
     if not url or not req.format_id:
         raise HTTPException(400, "Укажите ссылку и формат")
 
@@ -1301,7 +1301,7 @@ async def _do_download_once(
 
 
 async def _do_download(url: str, format_id: str, cookies: Optional[str]):
-    url = url.strip()
+    url = youtube_innertube.normalize_url(url.strip())
     if not url or not format_id:
         raise HTTPException(400, "Укажите ссылку и формат")
 

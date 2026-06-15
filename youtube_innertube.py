@@ -13,8 +13,17 @@ PLAYER_CACHE: dict[str, dict[str, Any]] = {}
 CACHE_TTL = 600
 
 
+def normalize_url(url: str) -> str:
+    u = (url or "").strip().rstrip("\\")
+    if u.startswith("//"):
+        u = f"https:{u}"
+    if re.match(r"^www\.", u, re.I):
+        u = f"https://{u}"
+    return u
+
+
 def extract_youtube_id(url: str) -> Optional[str]:
-    url = (url or "").strip().rstrip("\\")
+    url = normalize_url(url)
     patterns = [
         r"(?:v=|/embed/|/v/|/shorts/|youtu\.be/)([\w-]{11})",
         r"^([\w-]{11})$",
