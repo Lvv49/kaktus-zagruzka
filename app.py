@@ -964,7 +964,7 @@ async def download_by_token(token: str):
     tmp_dir = Path(job["tmp_dir"]) if job.get("tmp_dir") else None
     return FileResponse(
         job["file_path"],
-        media_type="application/octet-stream",
+        media_type="video/mp4",
         filename=job["filename"] or "video.mp4",
         background=_cleanup(tmp_dir) if tmp_dir else None,
     )
@@ -1068,7 +1068,7 @@ async def _do_download_once(
 
     return FileResponse(
         file_path,
-        media_type="application/octet-stream",
+        media_type="video/mp4",
         filename=safe_name,
         background=_cleanup(tmp_dir),
     )

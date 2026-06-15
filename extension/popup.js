@@ -150,6 +150,35 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function fetchPreparedFile(downloadUrl, filename, btnText) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (btnText) {
+      btnText.textContent = attempt ? `Скачиваем... повтор ${attempt + 1}` : 'Скачиваем файл...';
+    }
+    try {
+      await fetch(`${apiUrl}/`, { method: 'HEAD' }).catch(() => {});
+      const res = await fetch(downloadUrl);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Ошибка ${res.status}`);
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+      return;
+    } catch (e) {
+      if (attempt === 2) throw e;
+      await sleep(2000);
+    }
+  }
+}
+
 async function pollDownloadReady(token, onProgress) {
   for (let i = 0; i < 300; i++) {
     const res = await fetch(`${apiUrl}/api/download/status/${token}`);
@@ -287,23 +316,9 @@ async function download() {
     });
 
     const filename = ready.filename || `${sanitizeFilename(videoData?.title)}.mp4`;
-    const downloadUrl = `${apiUrl}${data.url}`;
+    await fetchPreparedFile(`${apiUrl}${data.url}`, filename, btnText);
 
-    await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(
-        { type: 'download', url: downloadUrl, filename },
-        (resp) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          if (resp?.ok) resolve();
-          else reject(new Error(resp?.error || 'Не удалось начать скачивание'));
-        },
-      );
-    });
-
-    showError('Файл готов — скачивание в панели Chrome.');
+    showError('Готово! Файл сохранён.');
   } catch (err) {
     showError(err.message);
   } finally {

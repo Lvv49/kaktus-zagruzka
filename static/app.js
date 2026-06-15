@@ -117,6 +117,38 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchPreparedFile(downloadUrl, filename, btnText) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (btnText) {
+      btnText.textContent = attempt ? `Скачиваем... повтор ${attempt + 1}` : 'Скачиваем файл...';
+    }
+    try {
+      const res = await fetch(downloadUrl);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Ошибка ${res.status}`);
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+      return;
+    } catch (e) {
+      if (attempt === 2) throw e;
+      await sleep(2000);
+    }
+  }
+}
+
 async function pollDownloadReady(token, onProgress) {
   for (let i = 0; i < 300; i++) {
     const res = await fetch(`/api/download/status/${token}`);
@@ -283,18 +315,17 @@ async function download() {
       throw new Error(data.detail || 'Ошибка скачивания');
     }
 
-    await pollDownloadReady(data.token, (i, status) => {
+    const ready = await pollDownloadReady(data.token, (i, status) => {
       if (btnText) {
         btnText.textContent = status === 'processing' ? `Готовим... ${i * 2}с` : 'Ожидаем...';
       }
     });
 
-    const a = document.createElement('a');
-    a.href = data.url;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    await fetchPreparedFile(
+      data.url,
+      ready.filename || 'video.mp4',
+      btnText,
+    );
 
     hideError();
   } catch (err) {
