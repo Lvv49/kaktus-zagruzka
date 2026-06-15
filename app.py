@@ -181,7 +181,9 @@ def youtube_stub_info(url: str) -> dict:
     }
 
 
-def default_youtube_clients() -> list[str]:
+def default_youtube_clients(with_cookies: bool = False) -> list[str]:
+    if with_cookies:
+        return ["web", "tv", "tv_embedded", "android_vr", "ios", "android"]
     return ["android_vr", "tv", "tv_embedded", "ios", "android", "mweb"]
 
 
@@ -585,7 +587,9 @@ def build_ytdl_opts(
     cookiefile: Optional[str] = None,
     player_clients: Optional[list[str]] = None,
 ) -> dict:
-    clients = player_clients or default_youtube_clients()
+    clients = player_clients or default_youtube_clients(
+        with_cookies=bool(cookiefile and Path(cookiefile).is_file())
+    )
     opts: dict = {
         "quiet": True,
         "no_warnings": True,
@@ -679,20 +683,37 @@ def fallback_formats() -> list[dict]:
 def build_extract_attempts(
     user_cookie_path: Optional[str],
     fast: bool,
+    cookies_only: bool = False,
 ) -> list[tuple[Optional[str], Optional[str], bool, Optional[list[str]]]]:
-    client_sets = (
-        [["android_vr"], ["tv"], ["ios"], ["android"]]
-        if fast
-        else [
+    if user_cookie_path and cookies_only:
+        client_sets = [
+            ["web", "tv"],
+            ["tv", "web"],
+            ["tv_embedded", "web"],
+            ["web"],
             ["android_vr"],
-            ["tv"],
-            ["tv_embedded"],
-            ["ios"],
-            ["android"],
-            ["mweb"],
             ["ios", "android"],
-            None,
         ]
+        return [(user_cookie_path, None, True, clients) for clients in client_sets]
+
+    client_sets = (
+        [["web", "tv"], ["android_vr"], ["tv"], ["ios"]]
+        if fast and user_cookie_path
+        else (
+            [["android_vr"], ["tv"], ["ios"], ["android"]]
+            if fast
+            else [
+                ["web", "tv"],
+                ["android_vr"],
+                ["tv"],
+                ["tv_embedded"],
+                ["ios"],
+                ["android"],
+                ["mweb"],
+                ["ios", "android"],
+                None,
+            ]
+        )
     )
 
     attempts: list[tuple[Optional[str], Optional[str], bool, Optional[list[str]]]] = []
@@ -701,13 +722,15 @@ def build_extract_attempts(
         for clients in client_sets:
             attempts.append((user_cookie_path, None, True, clients))
 
-    for clients in client_sets:
-        attempts.append((None, None, True, clients))
-        attempts.append((None, None, False, clients))
+    if not cookies_only:
+        for clients in client_sets:
+            if not user_cookie_path:
+                attempts.append((None, None, True, clients))
+            attempts.append((None, None, False, clients))
 
-    if not IS_RENDER and not user_cookie_path:
-        for browser in cookie_browser_fallbacks()[:2]:
-            attempts.append((None, browser, True, None))
+        if not IS_RENDER and not user_cookie_path:
+            for browser in cookie_browser_fallbacks()[:2]:
+                attempts.append((None, browser, True, None))
 
     return attempts
 
@@ -726,7 +749,12 @@ def ytdl_extract(
     base_extra.setdefault("extract_flat", False)
 
     with temp_cookie_file(user_cookies) as user_cookie_path:
-        attempts = build_extract_attempts(user_cookie_path, fast=fast or not download)
+        use_user_only = bool(download and user_cookies and user_cookies.strip())
+        attempts = build_extract_attempts(
+            user_cookie_path,
+            fast=fast or not download,
+            cookies_only=use_user_only,
+        )
         collected: list[dict] = []
         last_error: Optional[Exception] = None
 
@@ -761,26 +789,35 @@ def ytdl_extract(
 
 
 YOUTUBE_COOKIE_HINT = (
-    "YouTube заблокировал скачивание. Попробуйте формат 360p или откройте сайт "
-    "с установленным расширением Chrome (cookies подтянутся автоматически)."
+    "YouTube заблокировал скачивание. Установите расширение Chrome, "
+    "зайдите на youtube.com и войдите в аккаунт."
+)
+
+YOUTUBE_COOKIE_STALE_HINT = (
+    "Cookies устарели. Откройте youtube.com в Chrome, обновите страницу (F5) "
+    "и нажмите «Скачать» снова."
 )
 
 
-def is_bot_error(err: Exception) -> bool:
-    return is_retryable_ytdl_error(err)
+def has_user_cookies(cookies: Optional[str]) -> bool:
+    return bool(cookies and cookies.strip() and "youtube" in cookies.lower())
 
 
-def friendly_ytdl_error(err: Exception) -> str:
+def friendly_ytdl_error(err: Exception, had_user_cookies: bool = False) -> str:
     if is_bot_error(err):
-        return YOUTUBE_COOKIE_HINT
+        return YOUTUBE_COOKIE_STALE_HINT if had_user_cookies else YOUTUBE_COOKIE_HINT
     msg = str(err)
     if "player response" in msg.lower():
         return YOUTUBE_COOKIE_HINT
     if is_format_unavailable_error(err):
-        return "Выбранный формат недоступен. Попробуйте «лучшее качество» или «хорошее качество»."
+        return "Выбранный формат недоступен. Попробуйте «лучшее качество»."
     if msg.startswith("ERROR:"):
         msg = msg.split(":", 1)[1].strip()
     return msg[:300]
+
+
+def is_bot_error(err: Exception) -> bool:
+    return is_retryable_ytdl_error(err)
 
 
 def is_useful_format(fmt: dict) -> bool:
@@ -965,7 +1002,10 @@ async def _do_download(url: str, format_id: str, cookies: Optional[str]):
         return await _do_download_once(url, format_string, cookies, tmp_dir)
     except yt_dlp.utils.DownloadError as e:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise HTTPException(400, f"Ошибка скачивания: {friendly_ytdl_error(e)}")
+        raise HTTPException(
+            400,
+            f"Ошибка скачивания: {friendly_ytdl_error(e, has_user_cookies(cookies))}",
+        )
     except HTTPException:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise

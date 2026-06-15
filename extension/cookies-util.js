@@ -4,19 +4,28 @@ async function fetchYoutubeCookiesNetscape() {
     'https://www.youtube.com/',
     'https://youtube.com/',
     'https://www.google.com/',
+    'https://accounts.google.com/',
   ];
 
   for (const url of urls) {
-    const list = await chrome.cookies.getAll({ url });
-    all.push(...list);
+    try {
+      const list = await chrome.cookies.getAll({ url });
+      all.push(...list);
+    } catch {}
   }
 
-  const extra = await chrome.cookies.getAll({ domain: 'youtube.com' });
-  const google = await chrome.cookies.getAll({ domain: 'google.com' });
-  all.push(...extra, ...google);
+  for (const domain of ['youtube.com', '.youtube.com', 'google.com', '.google.com']) {
+    try {
+      const list = await chrome.cookies.getAll({ domain });
+      all.push(...list);
+    } catch {}
+  }
 
-  const googleKeep = new Set([
-    'SID', 'HSID', 'SSID', 'APISID', 'SAPISID', 'LOGIN_INFO', 'NID', 'PREF', '__Secure-1PSID', '__Secure-3PSID',
+  const authNames = new Set([
+    'SID', 'HSID', 'SSID', 'APISID', 'SAPISID', 'LOGIN_INFO', 'NID', 'PREF',
+    '__Secure-1PSID', '__Secure-3PSID', '__Secure-1PAPISID', '__Secure-3PAPISID',
+    '__Secure-1PSIDTS', '__Secure-3PSIDTS', '__Secure-1PSIDCC', '__Secure-3PSIDCC',
+    'VISITOR_INFO1_LIVE', 'YSC', 'SOCS',
   ]);
 
   const seen = new Set();
@@ -27,12 +36,17 @@ async function fetchYoutubeCookiesNetscape() {
     if (seen.has(key)) continue;
     seen.add(key);
 
-    if (c.domain.includes('youtube') || googleKeep.has(c.name)) {
+    const onYoutube = c.domain.includes('youtube');
+    const googleAuth = c.domain.includes('google') && (
+      authNames.has(c.name) || c.name.startsWith('__Secure')
+    );
+
+    if (onYoutube || googleAuth) {
       filtered.push(c);
     }
   }
 
-  if (filtered.length < 5) return '';
+  if (filtered.length < 3) return '';
 
   const lines = [
     '# Netscape HTTP Cookie File',

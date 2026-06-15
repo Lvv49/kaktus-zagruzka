@@ -217,13 +217,21 @@ async function download() {
 
   hideError();
   setLoading(downloadBtn, true);
+  const btnText = downloadBtn.querySelector('.btn-text');
 
   if (/youtube\.com|youtu\.be/i.test(currentUrl)) {
     await loadAutoCookies();
+    if (!getCookies()) {
+      showError('Зайдите на youtube.com в Chrome и войдите в аккаунт');
+      setLoading(downloadBtn, false);
+      return;
+    }
   }
 
   try {
-    const prep = await fetch(`${apiUrl}/api/download/prepare`, {
+    if (btnText) btnText.textContent = 'Готовим файл...';
+
+    const res = await fetch(`${apiUrl}/api/download`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -233,28 +241,28 @@ async function download() {
       }),
     });
 
-    const data = await prep.json();
-    if (!prep.ok) {
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
       throw new Error(data.detail || 'Ошибка скачивания');
     }
 
-    setLoading(downloadBtn, false);
+    if (btnText) btnText.textContent = 'Сохраняем...';
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/i);
+    const filename = match ? decodeURIComponent(match[1]) : 'video.mp4';
 
-    await new Promise((resolve, reject) => {
-      chrome.downloads.download({
-        url: `${apiUrl}${data.url}`,
-        saveAs: true,
-      }, (id) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          resolve(id);
-        }
-      });
-    });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
   } catch (err) {
     showError(err.message);
   } finally {
+    if (btnText) btnText.textContent = '⬇ Скачать';
     setLoading(downloadBtn, false);
   }
 }
