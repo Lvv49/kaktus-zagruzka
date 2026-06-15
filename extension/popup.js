@@ -162,6 +162,13 @@ function renderResult(data) {
     formatSelect.appendChild(opt);
   });
 
+  let defaultIndex = data.formats.findIndex((f) => f.recommended);
+  if (defaultIndex < 0) {
+    defaultIndex = data.formats.findIndex((f) => f.filesize && f.filesize !== '—');
+  }
+  if (defaultIndex < 0) defaultIndex = 0;
+  formatSelect.selectedIndex = defaultIndex;
+
   resultEl.classList.remove('hidden');
 }
 
