@@ -971,6 +971,11 @@ def is_useful_format(fmt: dict) -> bool:
     return bool(fmt.get("format_id"))
 
 
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
+
 @app.get("/api/ping")
 async def ping():
     return {
@@ -980,19 +985,12 @@ async def ping():
     }
 
 
-@app.get("/api/youtube-probe")
-async def youtube_probe(video_id: str = "NFXHm4VArZ0"):
-    try:
-        player = youtube_innertube.fetch_innertube_player(video_id)
-        progressive, adaptive = youtube_innertube._parse_formats(player)
-        return {
-            "ok": True,
-            "progressive": len(progressive),
-            "adaptive": len(adaptive),
-            "title": (player.get("videoDetails") or {}).get("title"),
-        }
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:500]}
+@app.get("/api/config")
+async def get_config():
+    return {
+        "apiUrl": PUBLIC_URL or None,
+        "isProduction": bool(PUBLIC_URL),
+    }
 
 
 class YoutubeStreamRequest(BaseModel):
@@ -1019,14 +1017,6 @@ async def youtube_stream_url(req: YoutubeStreamRequest):
         }
     except Exception as e:
         raise HTTPException(400, str(e)[:300])
-
-
-@app.get("/api/config")
-async def get_config():
-    return {
-        "apiUrl": PUBLIC_URL or None,
-        "isProduction": bool(PUBLIC_URL),
-    }
 
 
 @app.get("/")
