@@ -20,6 +20,10 @@ function isYoutube(url) {
   return /youtube\.com|youtu\.be/i.test(url);
 }
 
+function normalizeYoutubeUrl(url) {
+  return (url || '').trim().replace(/\\+$/g, '');
+}
+
 function getCookies() {
   return cookiesInput.value.trim() || null;
 }
@@ -193,7 +197,8 @@ async function analyzeCloud(url) {
 }
 
 async function analyze() {
-  const url = urlInput.value.trim();
+  const url = normalizeYoutubeUrl(urlInput.value.trim());
+  urlInput.value = url;
   if (!url) {
     showError('Вставьте ссылку на видео');
     return;

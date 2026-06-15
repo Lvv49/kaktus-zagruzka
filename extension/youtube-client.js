@@ -11,13 +11,6 @@ const INNERTUBE_CLIENTS = [
   },
   {
     context: {
-      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-      clientVersion: '2.0',
-    },
-    userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
-  },
-  {
-    context: {
       clientName: 'IOS',
       clientVersion: '20.10.3',
       deviceModel: 'iPhone16,2',
@@ -39,21 +32,39 @@ const INNERTUBE_CLIENTS = [
     },
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
   },
+  {
+    context: {
+      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      clientVersion: '2.0',
+    },
+    userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+  },
 ];
+
+const WEB_USER_AGENT = INNERTUBE_CLIENTS[3].userAgent;
 
 const DNR_RULE_ID = 91001;
 let cachedApiKey = null;
 
+function normalizeYoutubeUrl(url) {
+  return (url || '').trim().replace(/\\+$/g, '');
+}
+
 function extractVideoId(url) {
+  const clean = normalizeYoutubeUrl(url);
   const patterns = [
     /(?:v=|\/embed\/|\/v\/|\/shorts\/|youtu\.be\/)([\w-]{11})/,
     /^([\w-]{11})$/,
   ];
   for (const pattern of patterns) {
-    const match = url.match(pattern);
+    const match = clean.match(pattern);
     if (match) return match[1];
   }
   return null;
+}
+
+function hasFormats(progressive, adaptive) {
+  return (progressive?.length || 0) + (adaptive?.length || 0) > 0;
 }
 
 function formatDuration(seconds) {
@@ -126,7 +137,7 @@ async function getApiKey() {
   }
 
   const res = await fetch('https://www.youtube.com/', {
-    headers: { 'User-Agent': INNERTUBE_CLIENTS[4].userAgent },
+    headers: { 'User-Agent': WEB_USER_AGENT },
   });
   const html = await res.text();
   const match = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/);
@@ -238,7 +249,7 @@ async function fetchPlayerFromWatchPage(videoId) {
   const res = await fetch(`https://www.youtube.com/watch?v=${videoId}&bpctr=9999999999&has_verified=1`, {
     headers: {
       Cookie: cookieHeader(cookies),
-      'User-Agent': INNERTUBE_CLIENTS[4].userAgent,
+      'User-Agent': WEB_USER_AGENT,
       'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
     },
   });
@@ -278,7 +289,8 @@ async function fetchPlayerFromInnertube(videoId) {
       if (playerIsUsable(data)) {
         return validatePlayer(data, videoId);
       }
-      lastError = new Error(data.playabilityStatus?.reason || 'Нет потоков для скачивания');
+      const reason = data.playabilityStatus?.reason;
+      lastError = new Error(reason || 'Нет потоков для скачивания');
     } catch (err) {
       lastError = err;
     }
@@ -309,14 +321,16 @@ async function fetchPlayerFromOpenTab(videoId) {
   return null;
 }
 
-async function fetchPlayer(videoId) {
-  const tabPlayer = await fetchPlayerFromOpenTab(videoId);
-  if (tabPlayer) return tabPlayer;
+async function fetchPlayer(videoId, preferInnertube = false) {
+  const fetchers = preferInnertube
+    ? [fetchPlayerFromInnertube, fetchPlayerFromWatchPage, fetchPlayerFromOpenTab]
+    : [fetchPlayerFromInnertube, fetchPlayerFromWatchPage, fetchPlayerFromOpenTab];
 
   const errors = [];
-  for (const fetcher of [fetchPlayerFromInnertube, fetchPlayerFromWatchPage]) {
+  for (const fetcher of fetchers) {
     try {
-      return await fetcher(videoId);
+      const player = await fetcher(videoId);
+      if (player) return player;
     } catch (err) {
       errors.push(err.message || String(err));
     }
@@ -333,7 +347,16 @@ function maxHeight(progressive, adaptive) {
 }
 
 function buildCompetitorFormats(progressive, adaptive) {
+  const progressiveHeights = new Set(
+    progressive.map((f) => f.height).filter(Boolean),
+  );
+  const videoHeights = adaptive
+    .filter((f) => f.mimeType?.startsWith('video/'))
+    .map((f) => f.height)
+    .filter(Boolean);
   const maxH = maxHeight(progressive, adaptive);
+  const hasAudio = adaptive.some((f) => f.mimeType?.startsWith('audio/'));
+
   const formats = [{
     format_id: 'b',
     label: 'Авто (рекомендуется)',
@@ -345,22 +368,27 @@ function buildCompetitorFormats(progressive, adaptive) {
 
   for (const height of [1080, 720, 480, 360, 240]) {
     if (maxH && height > maxH) continue;
+    const hasProgressive = [...progressiveHeights].some((h) => h <= height);
+    const hasVideo = videoHeights.some((h) => h <= height);
+    if (!hasProgressive && !hasVideo) continue;
     formats.push({
       format_id: `q:${height}`,
-      label: `MP4 · ${height}p`,
+      label: hasProgressive ? `MP4 · ${height}p` : `MP4 · ${height}p (видео)`,
       ext: 'mp4',
       resolution: `${height}p`,
       filesize: '—',
     });
   }
 
-  formats.push({
-    format_id: 'audio',
-    label: 'MP3 · только аудио',
-    ext: 'm4a',
-    resolution: 'аудио',
-    filesize: '—',
-  });
+  if (hasAudio) {
+    formats.push({
+      format_id: 'audio',
+      label: 'MP3 · только аудио',
+      ext: 'm4a',
+      resolution: 'аудио',
+      filesize: '—',
+    });
+  }
 
   return formats;
 }
@@ -374,7 +402,10 @@ function extFromMime(mimeType, fallback) {
 }
 
 function pickDownloadFormat(progressive, adaptive, formatId) {
-  if (formatId === 'audio') {
+  const fmt = (formatId || 'b').trim();
+  const normalized = fmt === '18' || fmt === 'worst' ? 'b' : fmt;
+
+  if (normalized === 'audio') {
     const audios = adaptive
       .filter((f) => f.mimeType?.startsWith('audio/'))
       .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
@@ -385,7 +416,7 @@ function pickDownloadFormat(progressive, adaptive, formatId) {
     };
   }
 
-  const maxH = formatId.startsWith('q:') ? parseInt(formatId.slice(2), 10) : null;
+  const maxH = normalized.startsWith('q:') ? parseInt(normalized.slice(2), 10) : null;
   const progressiveSorted = progressive
     .slice()
     .sort((a, b) => (b.height || 0) - (a.height || 0));
@@ -423,16 +454,21 @@ function pickDownloadFormat(progressive, adaptive, formatId) {
     };
   }
 
-  throw new Error('Формат недоступен. Выберите «Авто».');
+  throw new Error('Нет доступных форматов. Обновите youtube.com (F5) и попробуйте снова.');
 }
 
 async function analyzeYoutube(url) {
-  const videoId = extractVideoId(url);
+  const cleanUrl = normalizeYoutubeUrl(url);
+  const videoId = extractVideoId(cleanUrl);
   if (!videoId) throw new Error('Неверная ссылка YouTube');
 
   const player = await fetchPlayer(videoId);
   const details = player.videoDetails || {};
   const { progressive, adaptive } = parseRawFormats(player);
+
+  if (!hasFormats(progressive, adaptive)) {
+    throw new Error('YouTube не отдал ссылки на файл. Обновите youtube.com (F5).');
+  }
 
   await chrome.storage.session.set({
     [`yt_${videoId}`]: {
@@ -467,7 +503,7 @@ async function getMediaFetchHeaders(videoId) {
   const headers = {
     Referer: `https://www.youtube.com/watch?v=${videoId}`,
     Origin: 'https://www.youtube.com',
-    'User-Agent': INNERTUBE_CLIENTS[4].userAgent,
+    'User-Agent': WEB_USER_AGENT,
     Accept: '*/*',
     'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
     Cookie: cookieHeader(cookies),
@@ -485,7 +521,7 @@ async function setupYoutubeDownloadRules(videoId) {
     {
       header: 'User-Agent',
       operation: 'set',
-      value: INNERTUBE_CLIENTS[4].userAgent,
+      value: WEB_USER_AGENT,
     },
   ];
   if (cookieStr) {
@@ -510,31 +546,47 @@ async function setupYoutubeDownloadRules(videoId) {
 }
 
 async function resolveYoutubeDownload(url, formatId, forceRefresh = true) {
-  const videoId = extractVideoId(url);
+  const cleanUrl = normalizeYoutubeUrl(url);
+  const videoId = extractVideoId(cleanUrl);
   if (!videoId) throw new Error('Неверная ссылка YouTube');
 
-  let progressive;
-  let adaptive;
+  let progressive = [];
+  let adaptive = [];
   let title = 'video';
 
-  if (!forceRefresh) {
-    const cached = await chrome.storage.session.get(`yt_${videoId}`);
-    const entry = cached[`yt_${videoId}`];
-    if (entry && Date.now() - entry.ts < 5 * 60 * 1000) {
-      progressive = entry.progressive;
-      adaptive = entry.adaptive;
-      title = entry.title || title;
-    }
+  const cached = await chrome.storage.session.get(`yt_${videoId}`);
+  const entry = cached[`yt_${videoId}`];
+  if (entry && Date.now() - entry.ts < 10 * 60 * 1000 && hasFormats(entry.progressive, entry.adaptive)) {
+    progressive = entry.progressive;
+    adaptive = entry.adaptive;
+    title = entry.title || title;
   }
 
-  if (!progressive && !adaptive) {
-    const player = await fetchPlayer(videoId);
+  const tryPick = () => {
+    if (!hasFormats(progressive, adaptive)) return null;
+    try {
+      return pickDownloadFormat(progressive, adaptive, formatId);
+    } catch {
+      return null;
+    }
+  };
+
+  let picked = !forceRefresh ? tryPick() : null;
+  if (!picked) {
+    const player = await fetchPlayer(videoId, true);
     const details = player.videoDetails || {};
     title = details.title || title;
     ({ progressive, adaptive } = parseRawFormats(player));
-  }
 
-  const picked = pickDownloadFormat(progressive, adaptive, formatId);
+    if (!hasFormats(progressive, adaptive)) {
+      throw new Error('YouTube не отдал ссылки на файл. Обновите youtube.com (F5).');
+    }
+
+    await chrome.storage.session.set({
+      [`yt_${videoId}`]: { progressive, adaptive, title, ts: Date.now() },
+    });
+    picked = pickDownloadFormat(progressive, adaptive, formatId);
+  }
   const safeTitle = title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim().slice(0, 100);
   return {
     ok: true,
@@ -549,22 +601,27 @@ async function downloadYoutubeFile(url, formatId) {
   const resolved = await resolveYoutubeDownload(url, formatId, true);
   await setupYoutubeDownloadRules(resolved.videoId);
 
-  const started = await new Promise((resolve, reject) => {
-    chrome.downloads.download({
-      url: resolved.url,
-      filename: resolved.filename,
-      saveAs: false,
-      conflictAction: 'uniquify',
-    }, (id) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-      resolve(id);
+  try {
+    const started = await new Promise((resolve, reject) => {
+      chrome.downloads.download({
+        url: resolved.url,
+        filename: resolved.filename,
+        saveAs: false,
+        conflictAction: 'uniquify',
+      }, (id) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(id);
+      });
     });
-  });
 
-  await waitForDownloadComplete(started, url, formatId, resolved);
+    await waitForDownloadComplete(started, url, formatId, resolved);
+  } catch (directErr) {
+    await downloadYoutubeViaFetch(resolved, resolved.videoId);
+  }
+
   return {
     ok: true,
     filename: resolved.filename,

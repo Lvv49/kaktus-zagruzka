@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Кактус загрузка",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Скачивай YouTube с вашего ПК через расширение, остальное — через сайт",
   "action": {
     "default_popup": "popup.html",
