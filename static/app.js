@@ -1,6 +1,4 @@
 const urlInput = document.getElementById('url-input');
-const cookiesInput = document.getElementById('cookies-input');
-const cookiesBlock = document.getElementById('cookies-block');
 const analyzeBtn = document.getElementById('analyze-btn');
 const downloadBtn = document.getElementById('download-btn');
 const errorBox = document.getElementById('error-box');
@@ -11,29 +9,7 @@ let currentUrl = '';
 let selectedFormatId = null;
 let videoData = null;
 
-const savedCookies = localStorage.getItem('yt_cookies') || '';
-if (savedCookies) {
-  cookiesInput.value = savedCookies;
-  document.getElementById('cookies-status').classList.remove('hidden');
-}
-
-window.addEventListener('kaktus-cookies', (e) => {
-  cookiesInput.value = e.detail;
-  localStorage.setItem('yt_cookies', e.detail);
-  document.getElementById('cookies-status').classList.remove('hidden');
-});
-
-cookiesInput.addEventListener('input', () => {
-  localStorage.setItem('yt_cookies', cookiesInput.value);
-});
-
-function getCookies() {
-  return cookiesInput.value.trim() || null;
-}
-
-function isYoutube(url) {
-  return /youtube\.com|youtu\.be/i.test(url);
-}
+localStorage.removeItem('yt_cookies');
 
 function showError(msg) {
   errorBox.textContent = msg;
@@ -125,33 +101,12 @@ async function analyze() {
     const res = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, cookies: getCookies() }),
+      body: JSON.stringify({ url }),
     });
 
     const data = await res.json();
 
     if (!res.ok) {
-      if (data.detail && /форматы не найдены|cookies|бот|bot|sign in/i.test(data.detail)) {
-        cookiesInput.value = '';
-        localStorage.removeItem('yt_cookies');
-        const retry = await fetch('/api/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url }),
-        });
-        const retryData = await retry.json();
-        if (retry.ok) {
-          currentUrl = url;
-          videoData = retryData;
-          renderVideoInfo(retryData);
-          renderFormats(retryData.formats);
-          resultSection.classList.remove('hidden');
-          return;
-        }
-        if (data.detail && /cookies|бот|bot|sign in/i.test(data.detail)) {
-          cookiesBlock.classList.remove('hidden');
-        }
-      }
       throw new Error(data.detail || 'Не удалось обработать ссылку');
     }
 
@@ -180,7 +135,6 @@ async function download() {
       body: JSON.stringify({
         url: currentUrl,
         format_id: selectedFormatId,
-        cookies: getCookies(),
       }),
     });
 
@@ -220,15 +174,3 @@ urlInput.addEventListener('paste', () => {
     if (urlInput.value.trim()) analyze();
   }, 100);
 });
-
-const extInstallBtn = document.getElementById('ext-install-btn');
-const extModal = document.getElementById('ext-modal');
-const extModalClose = document.getElementById('ext-modal-close');
-
-extInstallBtn.addEventListener('click', (e) => {
-  e.preventDefault();
-  extModal.classList.remove('hidden');
-});
-
-extModalClose.addEventListener('click', () => extModal.classList.add('hidden'));
-extModal.querySelector('.ext-modal-backdrop').addEventListener('click', () => extModal.classList.add('hidden'));

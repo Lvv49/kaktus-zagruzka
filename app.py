@@ -266,9 +266,9 @@ def ytdl_extract(
         attempts: list[tuple[Optional[str], Optional[str], bool, Optional[list[str]]]] = []
 
         for clients in client_sets:
+            attempts.append((None, None, False, clients))
             if user_cookie_path:
                 attempts.append((user_cookie_path, None, True, clients))
-            attempts.append((None, None, False, clients))
 
         if not user_cookie_path and not IS_RENDER:
             for browser in cookie_browser_fallbacks():
@@ -316,8 +316,7 @@ def ytdl_extract(
 
 
 YOUTUBE_COOKIE_HINT = (
-    "Для YouTube вставь свои cookies ниже (только у тебя, не сохраняются на сервере). "
-    "Расширение Chrome: Get cookies.txt LOCALLY → youtube.com → Export"
+    "YouTube заблокировал запрос. Проверьте ссылку или попробуйте позже."
 )
 
 
@@ -427,7 +426,7 @@ async def analyze_video(req: AnalyzeRequest):
         formats = fallback_formats()
 
     if not formats:
-        raise HTTPException(400, "Доступные форматы не найдены. Установи расширение Chrome и зайди на youtube.com")
+        raise HTTPException(400, "Доступные форматы не найдены. Проверьте ссылку на видео.")
 
     return {
         "title": info.get("title", "Без названия"),

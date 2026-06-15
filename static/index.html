@@ -13,40 +13,6 @@
 <body>
   <div class="bg-glow"></div>
 
-  <a href="#" id="ext-install-btn" class="ext-install-btn" title="Установить расширение Chrome">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <circle cx="12" cy="12" r="10"/>
-      <circle cx="12" cy="12" r="4"/>
-      <line x1="21.17" y1="8" x2="12" y2="8"/>
-      <line x1="3.95" y1="6.06" x2="8.54" y2="14"/>
-      <line x1="10.88" y1="21.94" x2="15.46" y2="14"/>
-    </svg>
-    Расширение Chrome
-  </a>
-
-  <div id="ext-modal" class="ext-modal hidden">
-    <div class="ext-modal-backdrop"></div>
-    <div class="ext-modal-content">
-      <button class="ext-modal-close" id="ext-modal-close">&times;</button>
-      <img src="/static/logo.png" alt="" class="ext-modal-logo">
-      <h2>Расширение для Chrome</h2>
-
-      <a href="/api/extension/download" class="btn btn-download ext-download-btn" download>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="7 10 12 15 17 10"/>
-          <line x1="12" y1="15" x2="12" y2="3"/>
-        </svg>
-        Скачать расширение
-      </a>
-
-      <p class="ext-hint">
-        Распакуй ZIP → <code>chrome://extensions</code> → Режим разработчика →
-        Загрузить распакованное → папка <code>extension</code>
-      </p>
-    </div>
-  </div>
-
   <header class="header">
     <div class="logo-wrap">
       <img src="/static/logo.png" alt="Кактус" class="logo">
@@ -82,14 +48,6 @@
         <span class="platform-badge">Twitter/X</span>
         <span class="platform-badge">и другие</span>
       </div>
-
-      <p id="cookies-status" class="cookies-status hidden">✓ YouTube cookies подключены автоматически</p>
-
-      <details id="cookies-block" class="cookies-block hidden">
-        <summary>YouTube: вставить cookies вручную</summary>
-        <p class="cookies-hint">Обычно не нужно — установи расширение Chrome, cookies подтянутся сами.</p>
-        <textarea id="cookies-input" rows="3" placeholder="Только если без расширения..."></textarea>
-      </details>
     </section>
 
     <div id="error-box" class="error-box hidden"></div>
