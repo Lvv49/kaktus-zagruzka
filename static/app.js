@@ -117,11 +117,6 @@ async function analyze() {
     return;
   }
 
-  if (isYoutube(url) && !getCookies()) {
-    showError('Установи расширение Chrome (кнопка справа сверху) и зайди на youtube.com');
-    return;
-  }
-
   hideError();
   setLoading(analyzeBtn, true);
   resultSection.classList.add('hidden');
@@ -136,8 +131,26 @@ async function analyze() {
     const data = await res.json();
 
     if (!res.ok) {
-      if (data.detail && /cookies|бот|bot|sign in/i.test(data.detail)) {
-        cookiesBlock.open = true;
+      if (data.detail && /форматы не найдены|cookies|бот|bot|sign in/i.test(data.detail)) {
+        cookiesInput.value = '';
+        localStorage.removeItem('yt_cookies');
+        const retry = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+        const retryData = await retry.json();
+        if (retry.ok) {
+          currentUrl = url;
+          videoData = retryData;
+          renderVideoInfo(retryData);
+          renderFormats(retryData.formats);
+          resultSection.classList.remove('hidden');
+          return;
+        }
+        if (data.detail && /cookies|бот|bot|sign in/i.test(data.detail)) {
+          cookiesBlock.classList.remove('hidden');
+        }
       }
       throw new Error(data.detail || 'Не удалось обработать ссылку');
     }

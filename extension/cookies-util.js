@@ -32,7 +32,7 @@ async function fetchYoutubeCookiesNetscape() {
     }
   }
 
-  if (!filtered.length) return '';
+  if (filtered.length < 5) return '';
 
   const lines = [
     '# Netscape HTTP Cookie File',

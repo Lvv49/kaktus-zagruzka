@@ -210,6 +210,10 @@ def count_useful_formats(info: dict) -> int:
     return len([f for f in info.get("formats", []) if is_useful_format(f)])
 
 
+def is_valid_info(info: dict) -> bool:
+    return bool(info.get("title")) or count_useful_formats(info) > 0
+
+
 def fallback_formats() -> list[dict]:
     return [
         {
@@ -285,6 +289,8 @@ def ytdl_extract(
                 )
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=download)
+                if not is_valid_info(info):
+                    continue
                 count = count_useful_formats(info)
                 if count > best_count:
                     best_count = count
@@ -373,6 +379,9 @@ async def analyze_video(req: AnalyzeRequest):
         raise HTTPException(400, f"Не удалось получить видео: {msg}")
     except Exception as e:
         raise HTTPException(500, f"Ошибка сервера: {str(e)}")
+
+    if not info.get("title") and not count_useful_formats(info):
+        raise HTTPException(400, "Видео не найдено. Проверьте ссылку.")
 
     if info.get("_type") == "playlist":
         entries = info.get("entries", [])
