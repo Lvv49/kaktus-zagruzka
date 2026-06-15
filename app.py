@@ -1006,7 +1006,10 @@ async def youtube_stream_url(req: YoutubeStreamRequest):
         raise HTTPException(400, "Неверная ссылка YouTube")
 
     try:
-        player = youtube_innertube.fetch_innertube_player(video_id)
+        player = await asyncio.wait_for(
+            asyncio.to_thread(youtube_innertube.fetch_innertube_player, video_id),
+            timeout=20.0 if IS_RENDER else 45.0,
+        )
         title = sanitize_filename((player.get("videoDetails") or {}).get("title") or "video")
         stream = youtube_innertube.pick_innertube_stream(video_id, req.format_id)
         ext = stream["ext"] if str(stream["ext"]).startswith(".") else f".{stream['ext']}"
@@ -1015,6 +1018,8 @@ async def youtube_stream_url(req: YoutubeStreamRequest):
             "filename": f"{title}{ext}",
             "note": stream.get("note"),
         }
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "YouTube отвечает слишком долго. Попробуйте через минуту.")
     except Exception as e:
         raise HTTPException(400, str(e)[:300])
 
@@ -1055,7 +1060,15 @@ async def analyze_video(req: AnalyzeRequest):
 
     if is_youtube_url(url):
         try:
-            return youtube_innertube.innertube_analyze(url)
+            return await asyncio.wait_for(
+                asyncio.to_thread(youtube_innertube.innertube_analyze, url),
+                timeout=20.0 if IS_RENDER else 45.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                504,
+                "YouTube отвечает слишком долго. Подождите минуту и нажмите «Найти форматы» снова.",
+            )
         except ValueError as e:
             msg = str(e)
             if "Неверная ссылка" in msg:
@@ -1064,6 +1077,12 @@ async def analyze_video(req: AnalyzeRequest):
                 raise HTTPException(429, msg)
         except Exception:
             pass
+
+        if IS_RENDER:
+            raise HTTPException(
+                503,
+                "YouTube временно недоступен. Подождите минуту и попробуйте снова.",
+            )
 
     info = None
     had_cookies = has_user_cookies(req.cookies)

@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import ssl
 import time
@@ -19,6 +20,8 @@ PLAYER_CACHE: dict[str, dict[str, Any]] = {}
 API_KEY_CACHE: dict[str, Any] = {"key": None, "ts": 0}
 CACHE_TTL = 1800
 API_KEY_TTL = 3600
+IS_CLOUD = bool(os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL"))
+HTTP_TIMEOUT = 12 if IS_CLOUD else 25
 
 _SSL_CTX = ssl.create_default_context()
 try:
@@ -63,8 +66,8 @@ def get_cached_player(video_id: str) -> Optional[dict]:
     return entry["player"]
 
 
-def _urlopen(req: urllib.request.Request, timeout: int = 30):
-    return urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX)
+def _urlopen(req: urllib.request.Request, timeout: int | None = None):
+    return urllib.request.urlopen(req, timeout=timeout or HTTP_TIMEOUT, context=_SSL_CTX)
 
 
 def get_innertube_api_key() -> str:
@@ -76,8 +79,8 @@ def get_innertube_api_key() -> str:
         headers={"User-Agent": WEB_UA, "Accept-Language": "en-US,en;q=0.9"},
     )
     try:
-        with _urlopen(req, timeout=20) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
+    with _urlopen(req, timeout=15) as resp:
+        html = resp.read().decode("utf-8", errors="replace")
         match = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
         key = match.group(1) if match else FALLBACK_API_KEY
     except Exception:
@@ -202,12 +205,14 @@ def _innertube_request(video_id: str, client: dict) -> dict:
         },
         method="POST",
     )
-    for attempt in range(3):
+    for attempt in range(2 if IS_CLOUD else 3):
         try:
-            with _urlopen(req, timeout=30) as resp:
+            with _urlopen(req) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < 2:
+            if e.code == 429:
+                raise ValueError("YouTube временно ограничил запросы. Подождите минуту и попробуйте снова.")
+            if attempt < 1 and not IS_CLOUD:
                 time.sleep(1.5 * (attempt + 1))
                 continue
             raise
@@ -221,13 +226,15 @@ def _fetch_player_from_watch_page(video_id: str) -> dict:
             "Accept-Language": "en-US,en;q=0.9",
         },
     )
-    for attempt in range(3):
+    for attempt in range(2 if IS_CLOUD else 3):
         try:
-            with _urlopen(req, timeout=30) as resp:
+            with _urlopen(req) as resp:
                 html = resp.read().decode("utf-8", errors="replace")
             break
         except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < 2:
+            if e.code == 429:
+                raise ValueError("YouTube временно ограничил запросы. Подождите минуту и попробуйте снова.")
+            if attempt < 1 and not IS_CLOUD:
                 time.sleep(2 * (attempt + 1))
                 continue
             raise
@@ -263,16 +270,6 @@ def fetch_innertube_player(video_id: str) -> dict:
         },
         {
             "context": {
-                "clientName": "ANDROID_VR",
-                "clientVersion": "1.49.10",
-                "deviceMake": "Oculus",
-                "deviceModel": "Quest 3",
-                "androidSdkVersion": 32,
-            },
-            "userAgent": ANDROID_VR_UA,
-        },
-        {
-            "context": {
                 "clientName": "IOS",
                 "clientVersion": "20.10.3",
                 "deviceModel": "iPhone16,2",
@@ -280,21 +277,18 @@ def fetch_innertube_player(video_id: str) -> dict:
             },
             "userAgent": IOS_UA,
         },
-        {
-            "context": {
-                "clientName": "MWEB",
-                "clientVersion": "2.20250222.01.00",
-            },
-            "userAgent": WEB_UA,
-        },
-        {
-            "context": {
-                "clientName": "TVHTML5_SIMPLY",
-                "clientVersion": "2.0",
-            },
-            "userAgent": WEB_UA,
-        },
     ]
+    if not IS_CLOUD:
+        clients.insert(1, {
+            "context": {
+                "clientName": "ANDROID_VR",
+                "clientVersion": "1.49.10",
+                "deviceMake": "Oculus",
+                "deviceModel": "Quest 3",
+                "androidSdkVersion": 32,
+            },
+            "userAgent": ANDROID_VR_UA,
+        })
 
     last_error = "Не удалось получить видео с YouTube"
 

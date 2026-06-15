@@ -210,8 +210,15 @@ function renderFormats(formats) {
   });
 }
 
+function fetchWithTimeout(url, options = {}, timeoutMs = 35000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
 async function analyzeCloud(url) {
-  const res = await fetch('/api/analyze', {
+  const res = await fetchWithTimeout('/api/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(requestBody(url)),
@@ -235,16 +242,21 @@ async function analyze() {
   setLoading(analyzeBtn, true);
   resultSection.classList.add('hidden');
   analyzeBtn.querySelector('.btn-text').textContent = 'Ищем...';
+  showProgress('Ищем форматы...');
 
   try {
     const data = await analyzeCloud(url);
+    hideError();
     currentUrl = url;
     videoData = data;
     renderVideoInfo(data);
     renderFormats(data.formats);
     resultSection.classList.remove('hidden');
   } catch (err) {
-    showError(err.message);
+    const msg = err.name === 'AbortError'
+      ? 'Сервер не отвечает. Подождите минуту и нажмите «Найти форматы» снова.'
+      : err.message;
+    showError(msg);
   } finally {
     setLoading(analyzeBtn, false);
     analyzeBtn.querySelector('.btn-text').textContent = 'Найти форматы';
@@ -253,14 +265,14 @@ async function analyze() {
 
 async function downloadYoutubeDirect() {
   showProgress('Получаем ссылку на файл...');
-  const res = await fetch('/api/youtube/stream', {
+  const res = await fetchWithTimeout('/api/youtube/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: currentUrl,
       format_id: selectedFormatId,
     }),
-  });
+  }, 40000);
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.detail || 'Ошибка скачивания YouTube');
@@ -317,12 +329,6 @@ downloadBtn.addEventListener('click', download);
 
 urlInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') analyze();
-});
-
-urlInput.addEventListener('paste', () => {
-  setTimeout(() => {
-    if (urlInput.value.trim()) analyze();
-  }, 100);
 });
 
 const extInstallBtn = document.getElementById('ext-install-btn');
